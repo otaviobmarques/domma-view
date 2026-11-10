@@ -35,7 +35,6 @@ jobs:
       - run: npm ci
       - name: Autoteste de mouse (SendInput)
         run: node scripts/selftest-input.js
-        continue-on-error: true
       - name: Gerar instalador
         run: npm run dist:win
       - name: Nome estável para download
