@@ -58,7 +58,12 @@ const now = () => Date.now();
 // ---------------- config pública ----------------
 app.get('/api/config', (req, res) => {
   const ice = [{ urls: (process.env.STUN_URLS || 'stun:stun.l.google.com:19302').split(',') }];
-  if (process.env.TURN_URL) ice.push({ urls: process.env.TURN_URL.split(','), username: process.env.TURN_USER, credential: process.env.TURN_PASS });
+  if (process.env.TURN_URL && process.env.TURN_SECRET) {
+    // Credencial temporária do coturn (use-auth-secret): vale 12 h, então o relay não fica aberto para qualquer um
+    const username = `${Math.floor(Date.now() / 1000) + 12 * 3600}:dv`;
+    const credential = crypto.createHmac('sha1', process.env.TURN_SECRET).update(username).digest('base64');
+    ice.push({ urls: process.env.TURN_URL.split(','), username, credential });
+  } else if (process.env.TURN_URL) ice.push({ urls: process.env.TURN_URL.split(','), username: process.env.TURN_USER, credential: process.env.TURN_PASS });
   res.json({ iceServers: ice, version: '1.0.0' });
 });
 

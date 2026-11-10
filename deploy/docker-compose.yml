@@ -1,0 +1,59 @@
+# Domma View no VPS com Traefik (HTTPS automático) + coturn (relay TURN).
+# Variáveis (.env do projeto): DOMINIO, ADMIN_EMAIL, ADMIN_PASSWORD, TURN_SECRET, PUBLIC_IP, IMAGE_TAG
+# A imagem vem do workflow .github/workflows/imagem.yml (GHCR).
+name: domma-view
+services:
+  app:
+    image: ghcr.io/otaviobmarques/domma-view:${IMAGE_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      TURN_URL: turn:${PUBLIC_IP}:3478?transport=udp,turn:${PUBLIC_IP}:3478?transport=tcp
+      TURN_SECRET: ${TURN_SECRET}
+      WINDOWS_INSTALLER_URL: ${WINDOWS_INSTALLER_URL:-}
+    volumes:
+      - dados:/data
+    networks: [default, traefik-edge]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik-edge
+      traefik.http.routers.dommaview.rule: Host(`${DOMINIO}`)
+      traefik.http.routers.dommaview.entrypoints: websecure
+      traefik.http.routers.dommaview.tls: "true"
+      traefik.http.routers.dommaview.tls.certresolver: letsencrypt
+      traefik.http.services.dommaview.loadbalancer.server.port: "3000"
+
+  turn:
+    image: coturn/coturn:4.6.3
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -n
+      - --listening-port=3478
+      - --external-ip=${PUBLIC_IP}
+      - --min-port=49160
+      - --max-port=49260
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET}
+      - --realm=${DOMINIO}
+      - --fingerprint
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --total-quota=200
+      - --log-file=stdout
+
+networks:
+  traefik-edge:
+    external: true
+volumes:
+  dados:
