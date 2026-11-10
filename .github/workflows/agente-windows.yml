@@ -13,6 +13,9 @@ on:
       server_url:
         description: 'Endereço do servidor (ex.: https://view.suaempresa.com.br)'
         required: false
+      release:
+        description: 'Publicar como versão (ex.: agente-v1.0.0); vazio = só gerar o artefato'
+        required: false
 
 permissions:
   contents: write
@@ -46,9 +49,10 @@ jobs:
           path: agent-desktop/dist/DommaView-Setup.exe
           retention-days: 30
       - name: Publicar na Release
-        if: startsWith(github.ref, 'refs/tags/agente-v')
+        if: startsWith(github.ref, 'refs/tags/agente-v') || github.event.inputs.release != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.release || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --title "Domma View para Windows ${GITHUB_REF_NAME#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor - $DV_SERVER_URL" || gh release upload "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --clobber
+          gh release create "$TAG" dist/DommaView-Setup.exe --target "$GITHUB_SHA" --title "Domma View para Windows ${TAG#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor - $DV_SERVER_URL" || gh release upload "$TAG" dist/DommaView-Setup.exe --clobber
