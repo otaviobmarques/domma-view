@@ -51,4 +51,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --title "Domma View para Windows ${GITHUB_REF_NAME#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor: $DV_SERVER_URL" || gh release upload "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --clobber
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --title "Domma View para Windows ${GITHUB_REF_NAME#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor - $DV_SERVER_URL" || gh release upload "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --clobber
