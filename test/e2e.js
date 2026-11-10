@@ -187,6 +187,8 @@ const fakeScreen = () => {
     await site.goto(BASE);
     await site.waitForSelector('text=Suporte remoto feito para o');
     await site.waitForSelector('#plans .plan-card');
+    await site.waitForSelector('.mock .mock-chat');
+    await site.waitForSelector('.mock-req .mr-code');
     await shot(site, '13-site');
     await site.click('.topnav >> text=Criar conta');
     await site.waitForSelector('text=Sua conta Domma View em 2 minutos');
