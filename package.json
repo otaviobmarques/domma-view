@@ -1,0 +1,20 @@
+{
+  "name": "domma-view",
+  "version": "1.0.0",
+  "description": "Domma View — acesso e suporte remoto (MVP web)",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/e2e.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22.5"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,55 @@
+/* Agente: instalador, QuickSupport e tela do usuário */
+body { background: #efedf8; }
+.wizard { display: grid; grid-template-columns: 250px 1fr; width: min(860px, 100%); min-height: 520px; margin: 40px auto; background: #fff; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 40px rgba(26,18,56,.12); }
+.wz-side { background: var(--navy); color: #cfc8ec; padding: 26px 22px; display: flex; flex-direction: column; }
+.wz-side .brand { padding: 0 0 26px; }
+.steps { display: flex; flex-direction: column; gap: 18px; }
+.step { display: flex; align-items: center; gap: 12px; font-weight: 600; color: #8f86b8; }
+.step i { width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid #5d5290; display: grid; place-items: center; font-style: normal; font-size: 12px; }
+.step.on { color: #fff; } .step.on i { background: var(--violet-300); border-color: var(--violet-300); color: var(--navy); }
+.step.done i { background: #3fc596; border-color: #3fc596; color: var(--navy); }
+.wz-foot { margin-top: auto; font-size: 11px; color: #8f86b8; }
+.wz-main { padding: 34px 36px; display: flex; flex-direction: column; }
+.wz-main h1 { font-size: 26px; }
+.wz-nav { margin-top: auto; display: flex; justify-content: space-between; padding-top: 24px; }
+.opt { border: 1.5px solid var(--line); border-radius: 12px; padding: 14px 16px; cursor: pointer; margin-bottom: 10px; display: block; }
+.opt.on { border-color: var(--violet); background: var(--violet-50); }
+.opt input { display: none; }
+.task { font-size: 13px; padding: 3px 0; }
+.task.done { color: var(--green); } .task.doing { color: var(--violet); } .task.todo { color: var(--ink-3); }
+.ok-txt { color: var(--green); font-size: 12px; font-weight: 600; margin-top: 4px; }
+.err-txt { color: var(--red); font-size: 12px; font-weight: 600; margin-top: 4px; }
+
+.agent { width: min(560px, 100%); margin: 30px auto; padding: 0 16px; }
+.agent-card { background: #fff; border-radius: 18px; overflow: hidden; box-shadow: 0 10px 40px rgba(26,18,56,.12); }
+.agent-head { background: var(--navy); color: #fff; padding: 18px 22px; }
+.agent-head .brand { padding: 0 0 14px; }
+.org { background: var(--navy-2); border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 12px; }
+.org .logo-box { width: 34px; height: 34px; border-radius: 8px; background: #fff; color: var(--navy); display: grid; place-items: center; font-weight: 800; font-size: 12px; }
+.org small { color: #a79fd0; display: block; font-size: 11px; }
+.org .ver { margin-left: auto; color: #3fc596; font-size: 12px; font-weight: 700; }
+.agent-body { padding: 22px; }
+.agent-body .big-id { font-size: 40px; }
+.agent-foot { display: flex; justify-content: space-between; padding: 12px 22px; border-top: 1px solid var(--line); font-size: 12px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; }
+.dot.off { background: var(--ink-3); }
+
+.conn-bar { position: sticky; top: 0; z-index: 30; background: var(--navy); color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+.conn-bar .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #3fc596; box-shadow: 0 0 0 4px rgba(63,197,150,.25); }
+.conn-bar b { font-size: 14px; }
+.conn-bar .btn { margin-left: auto; }
+.rec-agent { background: var(--red-50); color: #7a1626; padding: 8px 16px; font-size: 13px; font-weight: 600; }
+.chat-box { border: 1px solid var(--line); border-radius: 12px; height: 220px; overflow: auto; padding: 10px; background: #faf9ff; }
+.chat-box .msg { background: #ecebf5; color: var(--ink); }
+.chat-box .msg.me { background: var(--violet); color: #fff; }
+
+.req-code { font-family: var(--mono); font-size: 34px; color: var(--violet); letter-spacing: .1em; }
+.perm-box { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 8px; }
+.timer { font-family: var(--mono); background: var(--amber-50); color: var(--amber); border-radius: 8px; padding: 4px 8px; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .wizard { grid-template-columns: 1fr; margin: 0; border-radius: 0; min-height: 100vh; }
+  .steps { flex-direction: row; flex-wrap: wrap; gap: 10px; } .step span { display: none; }
+  .wz-foot { display: none; } .wz-main { padding: 24px 18px; }
+  .perm-box { grid-template-columns: 1fr; }
+}
