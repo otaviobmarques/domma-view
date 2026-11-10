@@ -200,7 +200,7 @@
     const shown = devFilter === 'Todos' ? list : list.filter((d) => d.grp === devFilter);
     const kp = { total: list.length, online: list.filter((d) => d.status !== 'offline').length, live: list.filter((d) => d.status === 'em_sessao').length, alerts: list.filter((d) => d.alerts.length).length };
     layout('dispositivos', `<div class="head"><div><div class="eyebrow">Conta ${esc(me.user.role === 'admin' ? 'Domma View' : me.user.company_name)}</div><h1>Dispositivos</h1></div>
-      <div class="actions"><button class="btn" id="exp">Exportar lista</button><button class="btn primary" id="inst">Baixar instalador</button></div></div>
+      <div class="actions">${me.user.role === 'admin' ? '<button class="btn" id="unit">Nova unidade</button>' : ''}<button class="btn" id="exp">Exportar lista</button><button class="btn primary" id="inst">Baixar instalador</button></div></div>
       <div class="kpis"><div class="card kpi"><b>${kp.total}</b><span class="muted small">dispositivos</span></div><div class="card kpi"><b style="color:var(--green)">${kp.online}</b><span class="muted small">online agora</span></div>
       <div class="card kpi"><b style="color:var(--violet)">${kp.live}</b><span class="muted small">sessões ativas</span></div><div class="card kpi"><b style="color:var(--amber)">${kp.alerts}</b><span class="muted small">alertas</span></div></div>
       <div class="chips">${groups.map((g) => `<button class="chip ${g === devFilter ? 'on' : ''}" data-g="${esc(g)}">${esc(g)}</button>`).join('')}</div>
@@ -214,18 +214,35 @@
       const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'dispositivos-domma-view.csv'; a.click();
     });
     $('#inst').addEventListener('click', () => installerModal(companies));
+    $('#unit') && $('#unit').addEventListener('click', () => unitModal(companies));
   };
+
+  function unitModal(companies) {
+    const groups = [...new Set(companies.map((c) => c.grp).filter(Boolean))];
+    modal(`<div class="mh"><h2>Nova unidade</h2><div class="muted small">Cada unidade (loja, matriz, franquia) ganha o próprio código de vínculo e os próprios Gestores.</div></div>
+      <div class="mb"><label class="field"><span>Nome da unidade</span><input id="un" maxlength="80" placeholder="ECV Contagem"></label>
+      <label class="field"><span>Grupo</span><input id="ug" maxlength="80" list="ugl" placeholder="Franquias MG"><datalist id="ugl">${groups.map((g) => `<option value="${esc(g)}">`).join('')}</datalist></label>
+      <label class="field"><span>CNPJ da unidade (opcional)</span><input id="uc" inputmode="numeric" maxlength="18"></label></div>
+      <div class="mf"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="us">Criar unidade</button></div>`, {
+      onMount: (el, close) => $('#us', el).addEventListener('click', async () => {
+        try {
+          const r = await api('/api/companies', { body: { name: $('#un', el).value, grp: $('#ug', el).value, cnpj: $('#uc', el).value } });
+          close(); toast(`Unidade criada · código ${r.code}`); PAGES.dispositivos();
+        } catch (e) { toast(e.message, true); }
+      }),
+    });
+  }
 
   function installerModal(companies) {
     const opts = companies.map((c) => `<option value="${esc(c.code)}" ${c.id === me.user.company_id ? 'selected' : ''}>${esc(c.grp)} · ${esc(c.name)} (${esc(c.code)})</option>`).join('');
     modal(`<div class="mh"><h2>Baixar instalador</h2><div class="muted small">O link já carrega o código da empresa: o computador entra direto na lista certa.</div></div>
       <div class="mb"><label class="field"><span>Empresa</span><select id="ic">${opts}</select></label>
       <label class="field"><span>Link do instalador</span><div class="row"><input id="il" readonly class="mono small"><button class="btn" id="icp">Copiar</button></div></label>
-      <div class="note small">Abra o link no computador da loja (Chrome ou Edge). Ele segue os 5 passos do instalador: boas-vindas, empresa, tipo de acesso, instalação e pronto.
-      <br><br>Os instaladores nativos (.exe, .msi para GPO, .pkg, .deb/.rpm, .apk) entram com o agente nativo, assinados digitalmente pela Domma.</div></div>
+      <div class="note small">Abra o link no computador da loja e baixe o instalador para Windows: ele já leva o código da empresa e o computador entra direto nesta lista.
+      <br><br>Instalação em massa (GPO): <span class="mono">DommaView-Setup.exe /S /EMPRESA=<span id="icx"></span></span></div></div>
       <div class="mf"><button class="btn" data-close>Fechar</button><a class="btn primary" id="io" target="_blank">Abrir instalador</a></div>`, {
       onMount: (el) => {
-        const upd = () => { const url = `${location.origin}/agente.html?empresa=${encodeURIComponent($('#ic', el).value)}`; $('#il', el).value = url; $('#io', el).href = url; };
+        const upd = () => { const url = `${location.origin}/download?empresa=${encodeURIComponent($('#ic', el).value)}`; $('#il', el).value = url; $('#io', el).href = url; $('#icx', el).textContent = $('#ic', el).value; };
         $('#ic', el).addEventListener('change', upd); upd();
         $('#icp', el).addEventListener('click', () => { navigator.clipboard.writeText($('#il', el).value); toast('Link copiado'); });
       },

@@ -2,7 +2,7 @@
 // sessões e repasse de mensagens WebRTC (a mídia vai direto P2P ou via TURN, cifrada DTLS-SRTP).
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { db, audit, tempPassword, verifyPassword, sha256, getSetting } = require('./db');
+const { db, audit, tempPassword, verifyPassword, sha256, accountOfCompany } = require('./db');
 const { userFromRequest, inCompany } = require('./auth');
 const { PLANS } = require('./plans');
 
@@ -34,8 +34,11 @@ function rotatePassword(deviceId) {
   send(a.ws, { type: 'password', password: a.password });
 }
 
-function activeSessionCount() { return live.size; }
-function planLimit() { return (PLANS[getSetting('plan', 'equipe')] || PLANS.equipe).sessions; }
+function activeSessionCount(accountId) { return [...live.values()].filter((s) => s.user.account_id === accountId).length; }
+function planLimit(accountId) {
+  const a = db.prepare('SELECT plan FROM accounts WHERE id=?').get(accountId ?? -1);
+  return (PLANS[a?.plan] || PLANS.equipe).sessions;
+}
 
 // ---------- API usada pelas rotas HTTP ----------
 function status(deviceId) {
@@ -46,7 +49,7 @@ function presence(userId) {
   if ([...live.values()].some((s) => s.user.id === userId)) return 'em_sessao';
   return techs.has(userId) ? 'livre' : 'ausente';
 }
-function stats() { return { activeSessions: live.size, limit: planLimit(), agentsOnline: agents.size }; }
+function stats(accountId) { return { activeSessions: activeSessionCount(accountId), limit: planLimit(accountId) }; }
 function liveSessions() { return [...live.entries()].map(([id, s]) => ({ id, deviceId: s.deviceId, techId: s.user.id })); }
 
 // ---------- conexão ----------
@@ -90,7 +93,8 @@ function handle(ws, m) {
       const prev = agents.get(d.id);
       if (prev && prev.ws !== ws) { send(prev.ws, { type: 'error', code: 'replaced', message: 'Este ID foi aberto em outra janela.' }); prev.ws.close(); }
       ws.deviceId = d.id;
-      agents.set(d.id, { ws, password: tempPassword(), device: d, unattendedReady: false, sysinfo: m.sysinfo || null });
+      const caps = Array.isArray(m.caps) ? m.caps.filter((c) => ['input', 'blackscreen', 'reboot', 'monitors', 'sas'].includes(c)) : [];
+      agents.set(d.id, { ws, password: tempPassword(), device: d, unattendedReady: false, sysinfo: m.sysinfo || null, native: !!m.native, caps });
       db.prepare('UPDATE devices SET last_seen=?, os=COALESCE(?,os) WHERE id=?').run(Date.now(), m.sysinfo?.os || null, d.id);
       const a = agents.get(d.id);
       notifyQueueIfTicket(d);
@@ -148,7 +152,7 @@ function handle(ws, m) {
     case 'session-event': {
       const s = live.get(m.sid);
       if (!s || (ws !== s.agentWs && ws !== s.techWs)) return;
-      const allowed = ['arquivo_enviado', 'arquivo_recebido', 'clipboard_enviado', 'qualidade_alterada', 'monitor_trocado', 'rota'];
+      const allowed = ['arquivo_enviado', 'arquivo_recebido', 'clipboard_enviado', 'qualidade_alterada', 'monitor_trocado', 'rota', 'tela_preta', 'reinicio_solicitado', 'atalho_enviado'];
       if (!allowed.includes(m.event)) return;
       if (m.event === 'rota') { db.prepare('UPDATE sessions SET route=? WHERE id=?').run(String(m.details?.route || ''), m.sid); return; }
       if (m.event.startsWith('arquivo')) db.prepare('UPDATE sessions SET files=files+1 WHERE id=?').run(m.sid);
@@ -179,7 +183,8 @@ function requestAccess(ws, m) {
   if (!d) return send(ws, { type: 'error', message: 'ID não encontrado.' });
   if (!a) return send(ws, { type: 'error', message: `${d.name} está offline agora.` });
   if ([...live.values()].some((s) => s.deviceId === deviceId)) return send(ws, { type: 'error', message: 'Este computador já está em uma sessão.' });
-  if (activeSessionCount() >= planLimit()) return send(ws, { type: 'error', message: `Limite do plano atingido: ${planLimit()} sessões simultâneas.` });
+  const limit = planLimit(user.account_id);
+  if (activeSessionCount(user.account_id) >= limit) return send(ws, { type: 'error', message: `Limite do plano atingido: ${limit} sessões simultâneas. Encerre uma sessão ou mude de plano.` });
 
   const key = `${ws.ip}|${deviceId}`;
   const f = failures.get(key);
@@ -256,15 +261,15 @@ function startSession(reqId, perms, unattended) {
   const sid = crypto.randomUUID();
   const s = { agentWs: a.ws, techWs: p.techWs, deviceId: p.deviceId, device: p.device, user: p.user, perms, ticketId: p.ticketId, recording: false, started: Date.now() };
   live.set(sid, s);
-  db.prepare('INSERT INTO sessions(id,device_id,tech_id,company_id,ticket_id,started_at,permissions,unattended) VALUES(?,?,?,?,?,?,?,?)')
-    .run(sid, p.deviceId, p.user.id, p.device.company_id, p.ticketId, s.started, JSON.stringify(perms), unattended ? 1 : 0);
+  db.prepare('INSERT INTO sessions(id,account_id,device_id,tech_id,company_id,ticket_id,started_at,permissions,unattended) VALUES(?,?,?,?,?,?,?,?,?)')
+    .run(sid, p.user.account_id, p.deviceId, p.user.id, p.device.company_id, p.ticketId, s.started, JSON.stringify(perms), unattended ? 1 : 0);
   if (p.ticketId) {
     db.prepare("UPDATE tickets SET status='em_atendimento', taken_by=?, taken_at=COALESCE(taken_at,?) WHERE id=?").run(p.user.id, Date.now(), p.ticketId);
     broadcastTechs(p.device.company_id, { type: 'queue-changed' });
   }
   audit({ companyId: p.device.company_id, userId: p.user.id, actor: unattended ? p.user.name : p.device.name, deviceId: p.deviceId, sessionId: sid,
     event: unattended ? 'acesso_nao_assistido' : 'acesso_permitido', details: { codigo: p.code, permissoes: perms } });
-  const info = { sid, perms, unattended, device: { id: p.device.id, name: p.device.name, company: p.device.company_name, os: p.device.os } };
+  const info = { sid, perms, unattended, native: a.native, caps: a.caps, device: { id: p.device.id, name: p.device.name, company: p.device.company_name, os: p.device.os } };
   send(a.ws, { type: 'session', ...info, tech: { name: p.user.name, company: p.user.company_name } });
   send(p.techWs, { type: 'session', ...info, sysinfo: a.sysinfo });
 }
@@ -312,7 +317,11 @@ function notifyQueueIfTicket(d) {
 }
 
 function broadcastTechs(companyId, msg) {
-  for (const set of techs.values()) for (const ws of set) if (ws.user && (ws.user.role === 'admin' || ws.user.company_id === companyId)) send(ws, msg);
+  if (companyId == null) return;
+  const accountId = accountOfCompany(companyId);
+  for (const set of techs.values()) for (const ws of set) {
+    if (ws.user && ((ws.user.role === 'admin' && ws.user.account_id === accountId) || ws.user.company_id === companyId)) send(ws, msg);
+  }
 }
 
 function kickDevice(deviceId) {

@@ -32,8 +32,9 @@ function parseCookies(header) {
 function userFromRequest(req) {
   const uid = readToken(parseCookies(req.headers.cookie)[COOKIE]);
   if (!uid) return null;
-  const u = db.prepare(`SELECT u.id,u.name,u.email,u.role,u.company_id,u.device_id,u.must_change,c.name company_name
-    FROM users u LEFT JOIN companies c ON c.id=u.company_id WHERE u.id=? AND u.active=1`).get(uid);
+  const u = db.prepare(`SELECT u.id,u.name,u.email,u.role,u.company_id,u.account_id,u.device_id,u.must_change,c.name company_name,
+      a.name account_name, a.plan FROM users u LEFT JOIN companies c ON c.id=u.company_id LEFT JOIN accounts a ON a.id=u.account_id
+    WHERE u.id=? AND u.active=1 AND (a.status IS NULL OR a.status='ativa')`).get(uid);
   return u || null;
 }
 function setCookie(res, token) {
@@ -61,13 +62,13 @@ const MATRIX = {
 function can(user, perm) { return !!(user && MATRIX[perm] && MATRIX[perm][user.role]); }
 function inCompany(user, companyId) {
   if (!user || companyId == null) return false; // computador sem empresa (QuickSupport avulso) só entra com senha
-  if (user.role === 'admin') return true;
-  if (user.role === 'gestor') return companyId != null && companyId === user.company_id;
+  if (user.role === 'admin') return db.prepare('SELECT account_id FROM companies WHERE id=?').get(companyId)?.account_id === user.account_id;
+  if (user.role === 'gestor') return companyId === user.company_id;
   return false;
 }
 // Filtro SQL de empresas visíveis
 function companyScope(user, col = 'company_id') {
-  if (user.role === 'admin') return { sql: '1=1', args: [] };
+  if (user.role === 'admin') return { sql: `${col} IN (SELECT id FROM companies WHERE account_id=?)`, args: [user.account_id ?? -1] };
   return { sql: `${col}=?`, args: [user.company_id ?? -1] };
 }
 

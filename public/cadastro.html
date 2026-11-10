@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Criar conta · Domma View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/domma.css">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<div id="site-head"></div>
+<div class="signup">
+  <aside>
+    <div class="eyebrow" style="color:var(--violet-300)">Portal de cadastro</div>
+    <h1>Sua conta Domma View em 2 minutos</h1>
+    <p style="color:#b9b0e0">Crie a conta da empresa, receba o código de vínculo e instale nos computadores da rede. Cada loja aparece no console já no grupo certo.</p>
+    <ul class="checklist" style="margin-top:28px">
+      <li><b>Código de empresa na hora</b><span>O instalador já leva o código: o computador entra direto na lista.</span></li>
+      <li><b>Você é o Administrador</b><span>Convide Gestores por loja e Funcionários para cada máquina.</span></li>
+      <li><b>Selo de empresa verificada</b><span>Depois da conferência do CNPJ, seus clientes veem o selo no QuickSupport.</span></li>
+      <li><b>Dados no Brasil</b><span>LGPD, consentimento por sessão e auditoria completa.</span></li>
+    </ul>
+  </aside>
+  <div class="form" id="form-box">
+    <h2 style="font-size:24px">Criar conta</h2>
+    <p class="muted small">Já tem conta? <a href="/app">Entrar no console</a></p>
+    <form id="sf" novalidate>
+      <div class="plan-pick" id="pp"></div>
+      <div class="two">
+        <label class="field"><span>Nome da empresa ou rede</span><input name="accountName" required maxlength="80" placeholder="Master Laudo"></label>
+        <label class="field"><span>CNPJ <small class="muted" id="cnpj-opt"></small></span><input name="cnpj" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00"><div id="cnpj-st"></div></label>
+      </div>
+      <label class="field"><span>Primeira unidade ou loja</span><input name="firstUnit" maxlength="80" placeholder="Matriz, ECV Contagem…"></label>
+      <div class="two">
+        <label class="field"><span>Seu nome</span><input name="name" required maxlength="80" autocomplete="name"></label>
+        <label class="field"><span>WhatsApp</span><input name="phone" inputmode="tel" maxlength="20" placeholder="(31) 90000-0000" autocomplete="tel"></label>
+      </div>
+      <label class="field"><span>E-mail de acesso</span><input name="email" type="email" required autocomplete="email"></label>
+      <label class="field"><span>Senha (mínimo 8 caracteres)</span><input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label class="check" style="margin:6px 0 18px"><input type="checkbox" name="terms"> <span class="small">Li e aceito os <a href="/termos.html" target="_blank">termos de uso</a> e a <a href="/privacidade.html" target="_blank">política de privacidade</a>.</span></label>
+      <div id="err"></div>
+      <button class="btn primary lg block">Criar conta</button>
+      <p class="muted small" style="margin-top:12px">A cobrança recorrente (Pix, boleto ou cartão) é ativada no lançamento. Até lá a conta funciona sem cobrança.</p>
+    </form>
+  </div>
+</div>
+<script src="/js/common.js"></script>
+<script src="/js/site.js"></script>
+<script>
+(() => {
+  const { esc, $, api } = DV;
+  const PLANS = { pessoal: ['Pessoal', 'Grátis · uso não comercial'], solo: ['Solo', 'R$ 59/mês · 1 técnico'], equipe: ['Equipe', 'R$ 189/mês · até 5 técnicos'] };
+  let plan = new URLSearchParams(location.search).get('plano');
+  if (!PLANS[plan]) plan = 'equipe';
+  const f = $('#sf');
+  function drawPlans() {
+    $('#pp').innerHTML = Object.entries(PLANS).map(([k, [n, d]]) => `<label class="${k === plan ? 'on' : ''}"><input type="radio" name="plan" value="${k}" ${k === plan ? 'checked' : ''}><b>${n}</b><span>${d}</span></label>`).join('');
+    $('#pp').querySelectorAll('input').forEach((i) => i.addEventListener('change', () => { plan = i.value; drawPlans(); }));
+    $('#cnpj-opt').textContent = plan === 'pessoal' ? '(opcional)' : '';
+  }
+  drawPlans();
+  const cnpj = f.cnpj;
+  cnpj.addEventListener('input', async () => {
+    const d = cnpj.value.replace(/\D/g, '').slice(0, 14);
+    cnpj.value = d.replace(/^(\d{2})(\d)/, '$1.$2').replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1/$2').replace(/(\d{4})(\d)/, '$1-$2');
+    const st = $('#cnpj-st');
+    if (d.length < 14) { st.innerHTML = ''; return; }
+    const r = await fetch(`/api/signup/check-cnpj?cnpj=${d}`).then((x) => x.json()).catch(() => ({}));
+    st.innerHTML = r.valid ? '<div class="hint-ok">CNPJ válido</div>' : '<div class="hint-err">CNPJ inválido</div>';
+  });
+  f.phone.addEventListener('input', () => {
+    const d = f.phone.value.replace(/\D/g, '').slice(0, 11);
+    f.phone.value = d.length > 10 ? d.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3') : d.replace(/(\d{2})(\d{0,4})(\d{0,4})/, (m, a, b, c) => `(${a}) ${b}${c ? '-' + c : ''}`).replace(/\(\) ?/, '');
+  });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(f));
+    data.plan = plan; data.terms = f.terms.checked;
+    const btn = f.querySelector('button.primary'); btn.disabled = true;
+    try {
+      const r = await api('/api/signup', { body: data });
+      $('#form-box').innerHTML = `<div class="done-box"><div class="eyebrow" style="color:var(--green)">Conta criada</div><h2 style="font-size:28px">Bem-vindo ao Domma View, ${esc(data.name.split(' ')[0])}!</h2>
+        <p>Este é o código de vínculo de <b>${esc(data.firstUnit || data.accountName)}</b>. O instalador baixado pelo console já vem com ele.</p>
+        <div class="code">${esc(r.code)}</div>
+        <h3 style="margin-top:26px">Próximos passos</h3>
+        <ol class="steps-num"><li>Baixe o instalador e rode no computador da loja.</li><li>O computador aparece em <b>Meus dispositivos</b> no console.</li><li>Convide os Gestores de cada loja em <b>Equipe e permissões</b>.</li></ol>
+        <div class="row" style="margin-top:18px;flex-wrap:wrap"><a class="btn primary lg" href="/download?empresa=${encodeURIComponent(r.code)}">Baixar o instalador</a><a class="btn lg" href="/app">Abrir o console</a></div></div>`;
+    } catch (er) {
+      $('#err').innerHTML = `<div class="note danger" style="margin-bottom:12px">${esc(er.message)}</div>`;
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

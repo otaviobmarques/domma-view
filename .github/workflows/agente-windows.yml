@@ -1,0 +1,54 @@
+# Gera o instalador do Domma View para Windows num Windows de verdade.
+# - Em todo push que mexe no agente: build + autoteste de mouse; o .exe fica nos artefatos do workflow.
+# - Em tag agente-v*: publica o .exe numa Release (o servidor baixa de lá via WINDOWS_INSTALLER_URL).
+# Endereço do servidor gravado no instalador: variável do repositório DV_SERVER_URL (Settings → Variables).
+name: Agente Windows
+
+on:
+  push:
+    paths: ['agent-desktop/**', '.github/workflows/agente-windows.yml']
+    tags: ['agente-v*']
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'Endereço do servidor (ex.: https://view.suaempresa.com.br)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: agent-desktop
+    env:
+      DV_SERVER_URL: ${{ github.event.inputs.server_url || vars.DV_SERVER_URL || 'http://localhost:3000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-desktop/package-lock.json
+      - run: npm ci
+      - name: Autoteste de mouse (SendInput)
+        run: node scripts/selftest-input.js
+        continue-on-error: true
+      - name: Gerar instalador
+        run: npm run dist:win
+      - name: Nome estável para download
+        shell: bash
+        run: cp dist/DommaView-Setup-*.exe dist/DommaView-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DommaView-Setup
+          path: agent-desktop/dist/DommaView-Setup.exe
+          retention-days: 30
+      - name: Publicar na Release
+        if: startsWith(github.ref, 'refs/tags/agente-v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --title "Domma View para Windows ${GITHUB_REF_NAME#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor: $DV_SERVER_URL" || gh release upload "$GITHUB_REF_NAME" dist/DommaView-Setup.exe --clobber

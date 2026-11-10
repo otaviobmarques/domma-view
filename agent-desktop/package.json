@@ -1,0 +1,72 @@
+{
+  "name": "domma-view-agent",
+  "productName": "Domma View",
+  "version": "1.0.0",
+  "description": "Domma View para Windows: receba suporte remoto da sua empresa",
+  "author": "Domma Tecnologia",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "config": "node scripts/write-config.js",
+    "dist:win": "node scripts/write-config.js && electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "koffi": "2.16.3"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "br.com.domma.view",
+    "productName": "Domma View",
+    "copyright": "Domma Tecnologia",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "preload-bar.js",
+      "input-win.js",
+      "config.json",
+      "*.html",
+      "build/icon.png",
+      "build/tray.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": true,
+      "artifactName": "DommaView-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Domma View",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh",
+      "language": "1046"
+    },
+    "publish": null
+  },
+  "repository": "github:otaviobmarques/domma-view"
+}

@@ -1,0 +1,18 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+html,body{margin:0;background:transparent;font-family:'Segoe UI',system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+.bar{display:flex;align-items:center;gap:10px;height:40px;margin:3px;padding:0 6px 0 14px;background:#1b1236;color:#fff;border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.35);-webkit-app-region:drag}
+.dot{width:9px;height:9px;border-radius:50%;background:#3fc596;box-shadow:0 0 0 4px rgba(63,197,150,.25);flex:none}
+.t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}.t small{color:#a79fd0}
+button{-webkit-app-region:no-drag;border:0;background:#f6788a;color:#2a0b12;font:600 13px 'Segoe UI',system-ui;padding:7px 14px;border-radius:9px;cursor:pointer}
+</style></head><body>
+<div class="bar"><span class="dot"></span><div class="t" id="t"></div><button id="end">Encerrar</button></div>
+<script>
+const q = new URLSearchParams(location.search);
+const t = document.getElementById('t');
+t.textContent = (q.get('name') || 'Técnico') + ' está conectado';
+const s = document.createElement('small'); s.textContent = '  ·  ' + (q.get('unattended') ? 'acesso não assistido' : (q.get('company') || 'Domma View'));
+t.appendChild(s);
+document.getElementById('end').onclick = () => window.dvBar.end();
+</script></body></html>

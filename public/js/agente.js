@@ -3,6 +3,14 @@
   const { esc, $, $$, api, toast, modal, logo, fmtId, fmtBytes, socket, sysinfo } = DV;
   const root = $('#root');
   const STORE = 'dv_agent';
+  const NATIVE = window.dvNative || null; // presente quando roda dentro do Domma View para Windows
+  let nativeInfo = null;
+  async function fullInfo() {
+    const base = await sysinfo();
+    if (!NATIVE) return base;
+    try { nativeInfo = nativeInfo || await NATIVE.info(); } catch { return base; }
+    return { ...base, ...nativeInfo.sysinfo };
+  }
   const isQuick = location.pathname.startsWith('/s/') || location.pathname === '/suporte' || new URLSearchParams(location.search).has('quick');
   const linkToken = location.pathname.startsWith('/s/') ? decodeURIComponent(location.pathname.slice(3)) : null;
 
@@ -39,7 +47,7 @@
     let body = '', nav = '';
     if (wz.step === 1) {
       body = `<div class="eyebrow">Bem-vindo</div><h1>Instalar o Domma View neste computador</h1>
-        <p class="muted">Depois de instalado, este computador pode pedir suporte e receber acesso remoto da equipe da sua empresa. O agente fica ativo enquanto esta janela estiver aberta.</p>
+        <p class="muted">Depois de instalado, este computador pode pedir suporte e receber acesso remoto da equipe da sua empresa. ${NATIVE ? 'O Domma View inicia junto com o Windows e fica no canto da tela, perto do relógio.' : 'O agente fica ativo enquanto esta janela estiver aberta.'}</p>
         ${wz.company ? `<div class="note">Você abriu o link da empresa <b>${esc(wz.company.name)}</b>. O código de vínculo já veio preenchido.</div>` : ''}
         <label class="check" style="margin-top:18px"><input type="checkbox" id="terms" ${wz.terms ? 'checked' : ''}> Li e aceito os <a href="/termos.html" target="_blank">termos de uso</a> e a <a href="/privacidade.html" target="_blank">política de privacidade</a></label>`;
       nav = `<span></span><button class="btn primary" id="next" ${wz.terms ? '' : 'disabled'}>Continuar</button>`;
@@ -72,7 +80,7 @@
       nav = `<span></span><button class="btn" id="next">Abrir o Domma View</button>`;
     }
     root.innerHTML = `<div class="wizard"><aside class="wz-side"><div class="brand">${logo()} Domma View</div><div class="steps">${steps}</div>
-      <div class="wz-foot">Agente web 1.0.0 · Chrome, Edge e Firefox · conexão cifrada ponta a ponta</div></aside>
+      <div class="wz-foot">${NATIVE ? `Domma View ${esc(NATIVE.version)} para ${NATIVE.platform === 'win32' ? 'Windows' : esc(NATIVE.platform)}` : 'Agente web 1.0.0 · Chrome, Edge e Firefox'} · conexão cifrada ponta a ponta</div></aside>
       <section class="wz-main">${body}<div class="wz-nav">${nav}</div></section></div>`;
     bindWizard();
   }
@@ -114,7 +122,7 @@
     const step = async (i, fn) => { wz.tasks[i].s = 'doing'; renderWizard(); await fn(); wz.tasks[i].s = 'done'; await new Promise((r) => setTimeout(r, 250)); renderWizard(); };
     try {
       await step(0, async () => { if (!navigator.mediaDevices?.getDisplayMedia || !window.RTCPeerConnection) throw new Error('Este navegador não suporta compartilhamento de tela. Use Chrome, Edge ou Firefox no computador.'); });
-      const info = await sysinfo();
+      const info = await fullInfo();
       await step(1, async () => {});
       await step(2, async () => {
         const r = await api('/api/agent/register', { body: { companyCode: wz.code, name: wz.name.trim(), os: info.os, accessMode: wz.mode, unattendedPassword: wz.pass, termsAccepted: true } });
@@ -163,7 +171,14 @@
   function startAgent() {
     if (ws) return;
     renderAgent();
-    ws = socket(onMsg, async (s) => { s.send({ type: 'hello', deviceId: creds.deviceId, agentKey: creds.agentKey, sysinfo: await sysinfo() }); });
+    ws = socket(onMsg, async (s) => {
+      const info = await fullInfo();
+      s.send({ type: 'hello', deviceId: creds.deviceId, agentKey: creds.agentKey, sysinfo: info, native: !!NATIVE, caps: nativeInfo ? nativeInfo.caps : [] });
+    });
+    if (NATIVE) {
+      NATIVE.onEndRequest(() => endLocal(true));
+      NATIVE.onAskSupport(() => { NATIVE.attention(); askSupport(); });
+    }
     window.addEventListener('beforeunload', (e) => { if (sess) { e.preventDefault(); e.returnValue = ''; } });
   }
 
@@ -188,11 +203,12 @@
           <div class="row"><div class="pw">${esc(state.password || '········')}</div><button class="icon-btn" id="rotate" title="Gerar outra senha">↻</button></div>
           <div class="note warn" style="margin-top:16px">⚠ <b>Atenção a golpes.</b> Nenhum banco, Receita ou operadora pede acesso remoto. Se alguém ligou pedindo isso, feche esta janela.</div>
           ${!quick ? `<hr class="sep"><div class="between"><div><b>${esc(state.name)}</b><div class="muted small">${state.accessMode === 'nao_assistido' ? 'Acesso não assistido ativado' : 'Acesso com permissão'}</div></div><button class="btn primary" id="ask">Pedir suporte agora</button></div>` : ''}
-          ${state.accessMode === 'nao_assistido' && !quick ? `<div class="note" style="margin-top:14px"><b>Acesso não assistido.</b> O navegador só libera a tela depois de um clique. ${stream ? 'Tela liberada: o Gestor pode entrar sem aceite enquanto esta janela estiver aberta.' : ''}
+          ${state.accessMode === 'nao_assistido' && !quick && NATIVE ? '<div class="note" style="margin-top:14px"><b>Acesso não assistido ativo.</b> O Gestor da empresa pode entrar sem aceite. A barra de conexão fica visível no topo da tela durante o acesso.</div>' : ''}
+          ${state.accessMode === 'nao_assistido' && !quick && !NATIVE ? `<div class="note" style="margin-top:14px"><b>Acesso não assistido.</b> O navegador só libera a tela depois de um clique. ${stream ? 'Tela liberada: o Gestor pode entrar sem aceite enquanto esta janela estiver aberta.' : ''}
             <div style="margin-top:8px">${stream ? '<button class="btn sm" id="un-stop">Parar de liberar a tela</button>' : '<button class="btn sm primary" id="un-start">Liberar a tela para acesso não assistido</button>'}</div></div>` : ''}`}
         </div>
         <div class="agent-foot"><span><span class="dot ${state.online ? '' : 'off'}"></span>${state.online ? (live ? 'Em sessão · cifrada ponta a ponta' : 'Pronto para conectar') : 'Conectando ao servidor…'}</span>
-          <span class="muted">${quick ? 'Não precisa instalar' : `<button class="link small" id="uninstall">Desinstalar</button>`}</span></div>
+          <span class="muted">${quick ? 'Não precisa instalar' : NATIVE ? `Domma View ${esc(NATIVE.version)}` : `<button class="link small" id="uninstall">Desinstalar</button>`}</span></div>
       </div></div>`;
     bindAgent();
   }
@@ -310,6 +326,7 @@
     });
     reqModal.reqId = m.reqId;
     document.title = '● Pedido de acesso · Domma View';
+    NATIVE && NATIVE.attention();
   }
 
   // ---------- WebRTC (agente oferece a mídia) ----------
@@ -336,11 +353,31 @@
 
   function onData(m) {
     if (!sess) return;
-    if (m.t === 'chat') { sess.chat.push({ me: false, text: String(m.text).slice(0, 2000) }); renderAgent(); }
+    if (m.t === 'chat') { sess.chat.push({ me: false, text: String(m.text).slice(0, 2000) }); renderAgent(); NATIVE && NATIVE.attention(true); }
+    if (NATIVE && sess.perms.includes('controlar')) {
+      if (m.t === 'in') NATIVE.input(m);
+      if (m.t === 'black') NATIVE.blackscreen(!!m.on);
+    }
+    if (NATIVE && m.t === 'reboot' && sess.perms.includes('reiniciar')) NATIVE.reboot();
+    if (NATIVE && m.t === 'monitor') { switchScreen(); return; }
     if (m.t === 'clip' && sess.perms.includes('clipboard')) { sess.clip = String(m.text).slice(0, 20000); renderAgent(); }
     if (m.t === 'file-get' && sess.perms.includes('arquivos')) { const f = sess.shared.find((x) => x.id === m.id); if (f) sess.ch.sendFile(f.file, f.id); }
     if (m.t === 'monitor') { sess.monitorAsk = true; renderAgent(); }
     if (m.t === 'quality') applyQuality(m.v);
+  }
+
+  // No agente desktop a troca de tela é automática (não precisa de ninguém na frente do computador)
+  async function switchScreen() {
+    await NATIVE.nextScreen();
+    const old = stream;
+    try {
+      const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+      const track = s.getVideoTracks()[0];
+      const sender = sess.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
+      await sender.replaceTrack(track);
+      stream = s; watchTrack(track); old && old.getTracks().forEach((t) => t.stop());
+      ws.send({ type: 'session-event', sid: sess.sid, event: 'monitor_trocado' });
+    } catch {}
   }
 
   async function applyQuality(v) {
@@ -359,6 +396,7 @@
     try { sess.pc && sess.pc.close(); } catch {}
     sess.received.forEach((f) => setTimeout(() => URL.revokeObjectURL(f.url), 60000));
     sess = null;
+    if (NATIVE) { NATIVE.blackscreen(false); NATIVE.sessionBar(null); }
     if (!keepForUnattended) stopStream();
     document.title = 'Domma View · Agente';
     renderAgent();
@@ -369,6 +407,8 @@
       case 'welcome':
         state = { ...state, online: true, password: m.password, company: m.company, name: m.name, accessMode: m.accessMode };
         if (keepForUnattended && stream) ws.send({ type: 'agent-state', unattendedReady: true });
+        // No agente desktop a tela é liberada sem clique, então o não assistido fica pronto direto
+        if (NATIVE && m.accessMode === 'nao_assistido' && !isQuick) ws.send({ type: 'agent-state', unattendedReady: true });
         if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
         if (!sess) renderAgent();
         break;
@@ -383,7 +423,8 @@
       case 'cancel': if (reqModal && reqModal.reqId === m.reqId) { reqModal.close(); toast('O técnico cancelou o pedido.'); document.title = 'Domma View · Agente'; } break;
       case 'session':
         if (!stream && !(await captureScreen())) { ws.send({ type: 'end', sid: m.sid }); return; }
-        sess = { sid: m.sid, tech: m.tech, perms: m.perms, unattended: m.unattended, live: true, chat: [], shared: [], received: [], recording: false, sysinfo: await sysinfo() };
+        sess = { sid: m.sid, tech: m.tech, perms: m.perms, unattended: m.unattended, live: true, chat: [], shared: [], received: [], recording: false, sysinfo: await fullInfo() };
+        NATIVE && NATIVE.sessionBar({ name: m.tech.name, company: m.tech.company || '', unattended: !!m.unattended });
         document.title = `● ${m.tech.name} conectado · Domma View`;
         renderAgent();
         await beginRtc();
@@ -403,6 +444,9 @@
   else {
     creds = loadCreds();
     if (creds) startAgent();
-    else lookup().then(renderWizard);
+    else (async () => {
+      if (NATIVE && !wz.code) { try { wz.code = (await NATIVE.setupCode()) || ''; } catch {} }
+      await lookup(); renderWizard();
+    })();
   }
 })();

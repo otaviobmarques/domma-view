@@ -1,7 +1,8 @@
 // Sessão remota do técnico (seção 7.5) e transferência de arquivos (7.6).
 const DVSession = (() => {
   const { esc, $, $$, api, toast, modal, logo, fmtId, fmtBytes, fmtDur } = DV;
-  const NATIVE = 'Disponível com o agente nativo (Fase 0 do roadmap). O agente web transmite a tela, chat e arquivos.';
+  const NATIVE = 'Este computador usa o agente web, que só transmite a tela. Instale o Domma View para Windows nele para liberar este recurso.';
+  const NEEDS_SERVICE = 'Exige o serviço do Windows com privilégio de sistema (próxima fase do agente).';
   let s = null;
 
   function open(info, wsClient, iceServers, opts = {}) {
@@ -66,12 +67,12 @@ const DVSession = (() => {
         <div class="who">${logo(22)}<div><b>${esc(s.device.name)}</b><span>${fmtId(s.device.id)} · <span id="clock">00:00:00</span></span></div></div>
         ${tb('t-mon', 'Trocar tela', { title: 'Pede ao usuário para escolher outra tela ou monitor' })}
         ${tb('t-q', `Qualidade · ${{ auto: 'auto', max: 'máxima', fast: 'rápida' }[s.quality]}`)}
-        ${tb('t-cad', 'Ctrl+Alt+Del', { dis: true, title: NATIVE })}
-        ${tb('t-lock', 'Bloquear teclado do cliente', { dis: true, title: NATIVE })}
-        ${tb('t-black', 'Tela preta', { dis: true, title: NATIVE })}
+        ${tb('t-cad', 'Ctrl+Shift+Esc', { dis: !ctl('sas'), title: ctl('sas') ? 'Abre o Gerenciador de Tarefas no computador remoto. O Ctrl+Alt+Del real exige o serviço do sistema.' : NATIVE })}
+        ${tb('t-lock', 'Bloquear teclado do cliente', { dis: true, title: s.native ? NEEDS_SERVICE : NATIVE })}
+        ${tb('t-black', s.black ? 'Tela preta ligada' : 'Tela preta', { on: !!s.black, dis: !ctl('blackscreen'), title: ctl('blackscreen') ? 'Esconde a tela para quem está na frente do computador' : NATIVE })}
         ${tb('t-rec', s.recording ? 'Gravando' : 'Gravar', { on: !!s.recording, dis: !has('gravar'), title: has('gravar') ? '' : 'O usuário não liberou a gravação' })}
-        ${tb('t-ann', 'Anotar na tela', { dis: true, title: NATIVE })}
-        ${tb('t-rb', 'Reiniciar e reconectar', { dis: true, title: NATIVE })}
+        ${tb('t-ann', 'Anotar na tela', { dis: true, title: 'Em desenvolvimento' })}
+        ${tb('t-rb', 'Reiniciar', { dis: !(s.native && s.caps.includes('reboot') && has('reiniciar')), title: !s.native ? NATIVE : has('reiniciar') ? 'Reinicia o computador remoto. Com acesso não assistido, ele volta sozinho.' : 'O usuário não liberou reiniciar' })}
         ${tb('t-panel', 'Painel', { on: s.panel })}
         ${tb('t-files', 'Arquivos', { on: s.filesOpen, dis: !has('arquivos'), title: has('arquivos') ? '' : 'O usuário não liberou arquivos' })}
         ${tb('t-full', 'Tela cheia')}
@@ -83,24 +84,82 @@ const DVSession = (() => {
         <div class="screen" id="screen">
           <video id="rv" autoplay playsinline muted></video>
           <div class="wait" id="wait">${s.unattended ? 'Acesso não assistido · ' : ''}Aguardando o vídeo do computador remoto…</div>
-          ${has('controlar') ? `<div class="ctrl-hint" id="hint">Visualização ao vivo. Mouse e teclado remotos chegam com o agente nativo.</div>` : ''}
+          ${ctl('input') ? '<div class="ctrl-hint" id="hint">Controle ativo: clique na tela para usar mouse e teclado do computador remoto.</div>'
+            : has('controlar') ? '<div class="ctrl-hint" id="hint">Só visualização: este computador usa o agente web. Instale o Domma View para Windows nele para controlar mouse e teclado.</div>' : ''}
         </div>
         <aside class="s-panel" id="panel"></aside>
       </div>
       ${s.filesOpen ? '<div id="files-ov" style="position:absolute;inset:0;background:var(--bg);color:var(--ink);overflow:auto;z-index:5"></div>' : ''}`;
     if (s.stream) $('#rv').srcObject = s.stream;
-    renderScreenState(); renderPanel(); renderFiles(); bindTop();
+    renderScreenState(); renderPanel(); renderFiles(); bindTop(); bindInput();
     setTimeout(() => { const h = $('#hint'); h && h.remove(); }, 8000);
   }
 
   function renderScreenState() { const w = $('#wait'); if (w) w.style.display = s.stream ? 'none' : ''; const v = $('#rv'); if (v) v.style.display = s.stream ? '' : 'none'; }
+
+  // Controle remoto: só com agente desktop e com a permissão "Controlar mouse e teclado" liberada
+  function ctl(cap) { return !!(s.native && (s.caps || []).includes(cap) && has('controlar')); }
+  function sendIn(m) { s.ch && s.ch.open && s.ch.send({ t: 'in', ...m }); }
+  function bindInput() {
+    if (!ctl('input')) return;
+    const v = $('#rv'); if (!v) return;
+    v.tabIndex = 0;
+    const held = new Set();
+    const pos = (e) => {
+      const r = v.getBoundingClientRect(), vw = v.videoWidth, vh = v.videoHeight;
+      if (!vw || !vh) return null;
+      const k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
+      const x = (e.clientX - (r.left + (r.width - w) / 2)) / w, y = (e.clientY - (r.top + (r.height - h) / 2)) / h;
+      return x < 0 || y < 0 || x > 1 || y > 1 ? null : { x: +x.toFixed(5), y: +y.toFixed(5) };
+    };
+    let last = null, raf = 0;
+    v.addEventListener('pointermove', (e) => {
+      const p = pos(e); if (!p) return; last = p;
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; sendIn({ k: 'move', ...last }); });
+    });
+    v.addEventListener('pointerdown', (e) => {
+      const p = pos(e); if (!p) return;
+      e.preventDefault(); v.focus({ preventScroll: true }); v.setPointerCapture(e.pointerId);
+      sendIn({ k: 'down', b: e.button, ...p });
+    });
+    v.addEventListener('pointerup', (e) => { sendIn({ k: 'up', b: e.button, ...(pos(e) || last || { x: 0, y: 0 }) }); });
+    v.addEventListener('contextmenu', (e) => e.preventDefault());
+    v.addEventListener('dblclick', (e) => e.preventDefault());
+    v.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+      const clamp = (n) => Math.max(-1200, Math.min(1200, Math.round(n)));
+      sendIn({ k: 'wheel', dx: clamp(e.deltaX * unit * 1.2), dy: clamp(-e.deltaY * unit * 1.2) });
+    }, { passive: false });
+    v.addEventListener('keydown', (e) => {
+      if (!e.code) return;
+      e.preventDefault(); e.stopPropagation();
+      held.add(e.code); sendIn({ k: 'key', code: e.code, down: true });
+    });
+    v.addEventListener('keyup', (e) => {
+      if (!e.code) return;
+      e.preventDefault(); held.delete(e.code); sendIn({ k: 'key', code: e.code, down: false });
+    });
+    // Ao sair da tela, solta teclas presas (ex.: Alt+Tab no computador do técnico)
+    v.addEventListener('blur', () => { for (const code of held) sendIn({ k: 'key', code, down: false }); held.clear(); });
+  }
 
   function bindTop() {
     const on = (id, fn) => { const el = $('#' + id); el && el.addEventListener('click', fn); };
     on('t-end', () => end(true));
     on('t-panel', () => { s.panel = !s.panel; render(); });
     on('t-full', () => { document.fullscreenElement ? document.exitFullscreen() : $('#screen').requestFullscreen?.(); });
-    on('t-mon', () => { s.ch && s.ch.send({ t: 'monitor' }); toast('Pedimos ao usuário para escolher a outra tela.'); });
+    on('t-mon', () => { s.ch && s.ch.send({ t: 'monitor' }); toast(s.native ? 'Trocando para a próxima tela…' : 'Pedimos ao usuário para escolher a outra tela.'); });
+    on('t-cad', () => { sendIn({ k: 'combo', codes: ['ControlLeft', 'ShiftLeft', 'Escape'] }); s.ws.send({ type: 'session-event', sid: s.sid, event: 'atalho_enviado', details: { atalho: 'Ctrl+Shift+Esc' } }); $('#rv')?.focus(); });
+    on('t-black', () => {
+      s.black = !s.black; s.ch && s.ch.send({ t: 'black', on: s.black });
+      s.ws.send({ type: 'session-event', sid: s.sid, event: 'tela_preta', details: { ligada: s.black } }); render();
+    });
+    on('t-rb', () => {
+      if (!confirm(`Reiniciar ${s.device.name} agora? A sessão cai e, com acesso não assistido, o computador volta para a lista em cerca de 1 minuto.`)) return;
+      s.ch && s.ch.send({ t: 'reboot' });
+      s.ws.send({ type: 'session-event', sid: s.sid, event: 'reinicio_solicitado' });
+    });
     on('t-q', () => {
       s.quality = { auto: 'max', max: 'fast', fast: 'auto' }[s.quality];
       s.ch && s.ch.send({ t: 'quality', v: s.quality });
