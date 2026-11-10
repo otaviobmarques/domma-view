@@ -1,9 +1,11 @@
 # Domma View no VPS com Traefik (HTTPS automático) + coturn (relay TURN).
-# Variáveis (.env do projeto): DOMINIO, ADMIN_EMAIL, ADMIN_PASSWORD, TURN_SECRET, PUBLIC_IP, GIT_REF
+# Variáveis (.env do projeto): DOMINIO, ADMIN_EMAIL, ADMIN_PASSWORD, TURN_SECRET, PUBLIC_IP, IMAGE_TAG
+# A imagem vem do workflow .github/workflows/imagem.yml (GHCR).
 name: domma-view
 services:
   app:
-    build: https://github.com/otaviobmarques/domma-view.git#${GIT_REF:-main}
+    image: ghcr.io/otaviobmarques/domma-view:${IMAGE_TAG:-latest}
+    pull_policy: always
     restart: unless-stopped
     environment:
       NODE_ENV: production

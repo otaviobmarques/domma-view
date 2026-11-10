@@ -1,0 +1,35 @@
+# Monta a imagem Docker do servidor e publica em ghcr.io/otaviobmarques/domma-view
+# (tags: nome do branch e "latest" no main). O VPS só baixa a imagem pronta.
+name: Imagem do servidor
+
+on:
+  push:
+    branches: [main, 'feat/**']
+    paths-ignore: ['agent-desktop/**', 'docs/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: tag
+        run: echo "ref=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/otaviobmarques/domma-view:${{ steps.tag.outputs.ref }}
+            ghcr.io/otaviobmarques/domma-view:sha-${{ github.sha }}
+            ${{ github.ref_name == 'main' && 'ghcr.io/otaviobmarques/domma-view:latest' || '' }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
