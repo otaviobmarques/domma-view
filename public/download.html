@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download · Domma View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/domma.css">
+<link rel="stylesheet" href="/css/site.css">
+</head>
+<body>
+<div id="site-head"></div>
+<section class="hero" style="padding:56px 0 30px"><div class="wrap" style="display:block">
+  <div class="eyebrow">Download</div>
+  <h1 style="font-size:44px;margin-bottom:10px">Instale o Domma View</h1>
+  <p class="lead">Instale uma vez no computador que vai receber suporte. Ele inicia com o Windows, fica perto do relógio e entra direto na lista da sua empresa.</p>
+  <div class="card" style="max-width:560px;margin-top:10px">
+    <label class="field" style="margin:0"><span>Código da empresa</span>
+      <div class="row"><input id="code" class="mono" placeholder="ML-4821-ECV" autocomplete="off"><span id="code-st" class="small" style="white-space:nowrap"></span></div></label>
+    <div class="muted small" style="margin-top:6px">Está no console em <b>Meus dispositivos → Baixar instalador</b>. Com o código, o computador não precisa digitar nada.</div>
+  </div>
+</div></section>
+
+<section class="block" style="padding-top:20px"><div class="wrap">
+  <div class="dl-grid">
+    <div class="dl rec" id="dl-win"><div class="eyebrow">Recomendado</div><h3>Windows 10 e 11</h3>
+      <p>Agente completo: controle de mouse e teclado, acesso não assistido, inicia com o Windows, tela preta e reiniciar. Instalação para o usuário, sem pedir senha de administrador.</p>
+      <a class="btn primary block" id="win-btn" style="justify-content:center">Baixar para Windows (.exe)</a>
+      <div class="muted small" id="win-st" style="margin-top:8px"></div></div>
+    <div class="dl"><h3>Agente no navegador</h3><p>Sem instalar nada: transmite a tela, chat e arquivos pelo Chrome ou Edge. Não controla mouse e teclado (limite dos navegadores).</p>
+      <a class="btn block" id="web-btn" style="justify-content:center" href="/agente.html">Abrir agente web</a></div>
+    <div class="dl"><h3>QuickSupport</h3><p>Para um atendimento avulso: mostra ID e senha para você passar ao técnico, com aviso anti-golpe. Some quando a janela fecha.</p>
+      <a class="btn block" style="justify-content:center" href="/suporte">Abrir QuickSupport</a></div>
+  </div>
+
+  <div class="split" style="margin-top:56px;align-items:start">
+    <div><h2>Como instalar no Windows</h2>
+      <ol class="steps-num">
+        <li>Baixe o instalador com o código da empresa preenchido acima.</li>
+        <li>Abra o arquivo. Se o Windows mostrar “O Windows protegeu o computador”, clique em <b>Mais informações → Executar assim mesmo</b> (aparece enquanto o certificado de assinatura da Domma não está ativo).</li>
+        <li>Siga os passos: termos, empresa, tipo de acesso e pronto.</li>
+        <li>O computador aparece em <b>Meus dispositivos</b> no console.</li>
+      </ol></div>
+    <div><h2>Instalação em massa</h2>
+      <p class="muted">Para várias lojas por GPO ou ferramenta de TI, rode em modo silencioso com o código da empresa:</p>
+      <pre class="note mono small" style="white-space:pre-wrap">DommaView-Setup.exe /S /EMPRESA=<span id="code-ex">ML-4821-ECV</span></pre>
+      <p class="muted small">Requisitos: Windows 10 ou 11 de 64 bits, 150 MB livres e acesso à internet (HTTPS).</p></div>
+  </div>
+</div></section>
+<div id="site-foot"></div>
+<script src="/js/common.js"></script>
+<script src="/js/site.js"></script>
+<script>
+(() => {
+  const { $, esc } = DV;
+  const code = $('#code');
+  code.value = (new URLSearchParams(location.search).get('empresa') || '').toUpperCase();
+  let avail = {};
+  fetch('/api/public/downloads').then((r) => r.json()).then((d) => { avail = d; upd(); }).catch(upd);
+  let t;
+  async function check() {
+    const v = code.value.trim();
+    const st = $('#code-st');
+    if (!v) { st.innerHTML = ''; return; }
+    const r = await fetch(`/api/companies/lookup?code=${encodeURIComponent(v)}`);
+    st.innerHTML = r.ok ? `<span style="color:var(--green);font-weight:600">✓ ${esc((await r.json()).name)}</span>` : '<span style="color:var(--red);font-weight:600">Código não encontrado</span>';
+  }
+  function upd() {
+    const v = code.value.trim();
+    const q = v ? `?empresa=${encodeURIComponent(v)}` : '';
+    $('#win-btn').href = `/download/windows${q}`;
+    $('#web-btn').href = `/agente.html${q}`;
+    $('#code-ex').textContent = v || 'ML-4821-ECV';
+    if (avail.windows === false) { $('#win-btn').removeAttribute('href'); $('#win-btn').classList.add('disabled'); $('#win-btn').style.opacity = .5; $('#win-st').textContent = 'O instalador para Windows ainda não foi publicado neste servidor. Use o agente web por enquanto.'; }
+    else if (avail.windowsVersion) $('#win-st').textContent = `Versão ${avail.windowsVersion}`;
+  }
+  code.addEventListener('input', () => { code.value = code.value.toUpperCase(); upd(); clearTimeout(t); t = setTimeout(check, 400); });
+  upd(); check();
+})();
+</script>
+</body>
+</html>

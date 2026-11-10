@@ -13,12 +13,16 @@ db.exec(`
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS accounts(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, cnpj TEXT, phone TEXT, plan TEXT DEFAULT 'equipe',
+  status TEXT DEFAULT 'ativa', created_at INTEGER);
+
 CREATE TABLE IF NOT EXISTS companies(
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT UNIQUE NOT NULL,
+  id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES accounts(id), name TEXT NOT NULL, code TEXT UNIQUE NOT NULL,
   grp TEXT, cnpj TEXT, verified INTEGER DEFAULT 0, created_at INTEGER);
 
 CREATE TABLE IF NOT EXISTS users(
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL,
+  id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES accounts(id), name TEXT NOT NULL, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('admin','gestor','funcionario')),
   company_id INTEGER REFERENCES companies(id), device_id TEXT,
   active INTEGER DEFAULT 1, must_change INTEGER DEFAULT 0, created_at INTEGER);
@@ -30,12 +34,12 @@ CREATE TABLE IF NOT EXISTS devices(
   owner_user_id INTEGER, last_seen INTEGER, created_at INTEGER);
 
 CREATE TABLE IF NOT EXISTS sessions(
-  id TEXT PRIMARY KEY, device_id TEXT, tech_id INTEGER, company_id INTEGER, ticket_id INTEGER,
+  id TEXT PRIMARY KEY, account_id INTEGER, device_id TEXT, tech_id INTEGER, company_id INTEGER, ticket_id INTEGER,
   started_at INTEGER, ended_at INTEGER, permissions TEXT, unattended INTEGER DEFAULT 0,
   files INTEGER DEFAULT 0, recording TEXT, summary TEXT, ended_by TEXT, route TEXT);
 
 CREATE TABLE IF NOT EXISTS audit(
-  id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, company_id INTEGER, user_id INTEGER, actor TEXT,
+  id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, account_id INTEGER, company_id INTEGER, user_id INTEGER, actor TEXT,
   device_id TEXT, session_id TEXT, event TEXT NOT NULL, details TEXT, ip TEXT,
   prev_hash TEXT NOT NULL, hash TEXT NOT NULL);
 
@@ -54,6 +58,14 @@ CREATE TABLE IF NOT EXISTS support_links(
 
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 `);
+
+// Migração de bancos criados antes das contas (multiempresa)
+for (const [t, c] of [['companies', 'account_id INTEGER'], ['users', 'account_id INTEGER'], ['sessions', 'account_id INTEGER'], ['audit', 'account_id INTEGER']]) {
+  try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch {}
+}
+db.exec('CREATE INDEX IF NOT EXISTS audit_account ON audit(account_id, id)');
+const accountOfCompany = (id) => (id == null ? null : db.prepare('SELECT account_id FROM companies WHERE id=?').get(id)?.account_id ?? null);
+const accountOfUser = (id) => (id == null ? null : db.prepare('SELECT account_id FROM users WHERE id=?').get(id)?.account_id ?? null);
 
 // ---------- segredos persistidos (gerados no primeiro start) ----------
 function secret(name, envName) {
@@ -102,11 +114,11 @@ function tempPassword() {
 
 // ---------- auditoria imutável com hash encadeado ----------
 const lastHashStmt = db.prepare('SELECT hash FROM audit ORDER BY id DESC LIMIT 1');
-const insertAudit = db.prepare(`INSERT INTO audit(ts,company_id,user_id,actor,device_id,session_id,event,details,ip,prev_hash,hash)
-  VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+const insertAudit = db.prepare(`INSERT INTO audit(ts,account_id,company_id,user_id,actor,device_id,session_id,event,details,ip,prev_hash,hash)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
 
 function auditPayload(r) {
-  return JSON.stringify([r.ts, r.company_id, r.user_id, r.actor, r.device_id, r.session_id, r.event, r.details, r.ip, r.prev_hash]);
+  return JSON.stringify([r.ts, r.account_id, r.company_id, r.user_id, r.actor, r.device_id, r.session_id, r.event, r.details, r.ip, r.prev_hash]);
 }
 function audit(e) {
   const row = {
@@ -115,20 +127,22 @@ function audit(e) {
     details: e.details == null ? null : (typeof e.details === 'string' ? e.details : JSON.stringify(e.details)),
     ip: n(e.ip),
   };
+  row.account_id = e.accountId ?? accountOfCompany(row.company_id) ?? accountOfUser(row.user_id);
   const last = lastHashStmt.get();
   row.prev_hash = last ? last.hash : 'GENESIS';
   row.hash = sha256(auditPayload(row));
-  insertAudit.run(row.ts, row.company_id, row.user_id, row.actor, row.device_id, row.session_id,
+  insertAudit.run(row.ts, row.account_id, row.company_id, row.user_id, row.actor, row.device_id, row.session_id,
     row.event, row.details, row.ip, row.prev_hash, row.hash);
   return row;
 }
-function verifyAudit() {
-  let prev = 'GENESIS', count = 0;
+// A cadeia é única para o servidor todo; a conta só recebe o resultado e a própria contagem.
+function verifyAudit(accountId) {
+  let prev = 'GENESIS', count = 0, mine = 0;
   for (const r of db.prepare('SELECT * FROM audit ORDER BY id').all()) {
-    if (r.prev_hash !== prev || sha256(auditPayload(r)) !== r.hash) return { ok: false, brokenAt: r.id, count };
-    prev = r.hash; count++;
+    if (r.prev_hash !== prev || sha256(auditPayload(r)) !== r.hash) return { ok: false, brokenAt: r.account_id === accountId ? r.id : null, count: mine };
+    prev = r.hash; count++; if (r.account_id === accountId) mine++;
   }
-  return { ok: true, count };
+  return { ok: true, count: mine };
 }
 
 // ---------- gravações criptografadas (AES-256-GCM) ----------
@@ -150,5 +164,5 @@ function setSetting(k, v) { db.prepare('INSERT INTO settings(key,value) VALUES(?
 
 module.exports = {
   db, DATA_DIR, SESSION_SECRET, n, sha256, hashPassword, verifyPassword, randomDigits, newDeviceId,
-  tempPassword, audit, verifyAudit, encryptToFile, decryptFile, getSetting, setSetting,
+  tempPassword, audit, verifyAudit, accountOfCompany, encryptToFile, decryptFile, getSetting, setSetting,
 };

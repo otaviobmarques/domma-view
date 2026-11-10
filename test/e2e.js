@@ -60,7 +60,7 @@ const fakeScreen = () => {
     const tctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const techp = await tctx.newPage();
     techp.on('pageerror', (e) => console.error('[console]', e.message));
-    await techp.goto(BASE);
+    await techp.goto(`${BASE}/app`);
     await techp.fill('input[name=email]', EMAIL);
     await techp.fill('input[name=password]', PASS);
     await techp.click('button:has-text("Entrar")');
@@ -133,21 +133,21 @@ const fakeScreen = () => {
     console.log('✓ sessão encerrada');
 
     // ---------- console ----------
-    await techp.goto(`${BASE}/#/dispositivos`);
+    await techp.goto(`${BASE}/app#/dispositivos`);
     await techp.waitForSelector('text=Recepção');
     await shot(techp, '08-dispositivos');
-    await techp.goto(`${BASE}/#/auditoria`);
+    await techp.goto(`${BASE}/app#/auditoria`);
     await techp.waitForSelector('text=Assistir gravação', { timeout: 10000 });
     await shot(techp, '09-auditoria');
     await techp.click('#vfy');
     await techp.waitForSelector('text=Registro íntegro');
     console.log('✓ gravação salva e auditoria íntegra');
-    await techp.goto(`${BASE}/#/equipe`);
+    await techp.goto(`${BASE}/app#/equipe`);
     await techp.waitForSelector('text=Perfis de acesso');
     await shot(techp, '10-equipe');
 
     // ---------- fila + link de suporte + QuickSupport ----------
-    await techp.goto(`${BASE}/#/fila`);
+    await techp.goto(`${BASE}/app#/fila`);
     await techp.click('#lnew');
     await techp.waitForSelector('text=Enviar pelo WhatsApp');
     const link = (await techp.textContent('.note.mono')).trim();
@@ -170,7 +170,7 @@ const fakeScreen = () => {
     await p.goto(`${BASE}/suporte`);
     await p.waitForSelector('text=Pronto para conectar');
     const pid = (await p.textContent('.big-id')).replace(/\D/g, '');
-    await techp.goto(`${BASE}/#/inicio`);
+    await techp.goto(`${BASE}/app#/inicio`);
     await techp.waitForSelector('#pid');
     for (let i = 1; i <= 5; i++) {
       await techp.fill('#pid', pid); await techp.fill('#ppw', 'errada-' + i); await techp.click('#go');
@@ -180,6 +180,51 @@ const fakeScreen = () => {
     await techp.fill('#ppw', 'qualquer'); await techp.click('#go');
     await techp.waitForSelector('text=bloqueado por 24 h');
     console.log('✓ bloqueio após 5 senhas erradas');
+
+    // ---------- site + portal de cadastro + separação entre contas ----------
+    const sctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const site = await sctx.newPage();
+    await site.goto(BASE);
+    await site.waitForSelector('text=Suporte remoto feito para o');
+    await site.waitForSelector('#plans .plan-card');
+    await shot(site, '13-site');
+    await site.click('.topnav >> text=Criar conta');
+    await site.waitForSelector('text=Sua conta Domma View em 2 minutos');
+    await site.fill('input[name=accountName]', 'Rede Teste Vistorias');
+    await site.fill('input[name=cnpj]', '11222333000181');
+    await site.waitForSelector('text=CNPJ válido');
+    await site.fill('input[name=firstUnit]', 'Loja Centro');
+    await site.fill('input[name=name]', 'Maria Teste');
+    await site.fill('input[name=phone]', '31999998888');
+    await site.fill('input[name=email]', `maria.${Date.now()}@teste.local`);
+    await site.fill('input[name=password]', 'senha-forte-123');
+    await site.check('input[name=terms]');
+    await shot(site, '14-cadastro');
+    await site.click('button:has-text("Criar conta")');
+    await site.waitForSelector('text=Conta criada');
+    const newCode = (await site.textContent('.done-box .code')).trim();
+    assert(/^RT-\d{4}-CEN$/.test(newCode), `código da nova empresa: ${newCode}`);
+    await shot(site, '15-cadastro-ok');
+    console.log('✓ portal de cadastro criou a conta, código', newCode);
+    await site.click('text=Baixar o instalador');
+    await site.waitForSelector('text=Instale o Domma View');
+    await site.waitForSelector('#code-st >> text=Loja Centro');
+    await shot(site, '16-download');
+    const devs = await site.evaluate(() => fetch('/api/devices').then((r) => r.json()));
+    const sess = await site.evaluate(() => fetch('/api/sessions').then((r) => r.json()));
+    const comps = await site.evaluate(() => fetch('/api/companies').then((r) => r.json()));
+    const aud = await site.evaluate(() => fetch('/api/audit').then((r) => r.json()));
+    assert.strictEqual(devs.length, 0, 'conta nova não vê computadores de outra conta');
+    assert.strictEqual(sess.sessions.length, 0, 'conta nova não vê sessões de outra conta');
+    assert.deepStrictEqual(comps.map((c) => c.code), [newCode], 'conta nova só vê a própria empresa');
+    assert(aud.every((e) => !String(e.actor).includes('Administrador')), 'auditoria só da própria conta');
+    const blocked = await site.evaluate((id) => new Promise((res) => {
+      const w = new WebSocket(`ws://${location.host}/ws`);
+      w.onopen = () => w.send(JSON.stringify({ type: 'connect', deviceId: id }));
+      w.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === 'error' || m.type === 'pending') { res(m); w.close(); } };
+    }), deviceId);
+    assert.strictEqual(blocked.type, 'error', 'sem senha não conecta em computador de outra conta');
+    console.log('✓ contas separadas: a nova conta não vê nem acessa nada da outra');
 
     console.log('\nTODOS OS TESTES PASSARAM');
   } finally { await browser.close(); }

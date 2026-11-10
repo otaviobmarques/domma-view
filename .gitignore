@@ -2,3 +2,7 @@ node_modules/
 data/
 *.log
 .env
+downloads/
+agent-desktop/dist/
+agent-desktop/node_modules/
+agent-desktop/config.json

@@ -1,0 +1,20 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Domma View</title>
+<style>body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:#efedf8;color:#1a1238;display:grid;place-items:center;min-height:100vh}
+.c{background:#fff;border-radius:18px;padding:28px;width:min(440px,90vw);box-shadow:0 10px 40px rgba(26,18,56,.12)}
+h1{font-size:20px;margin:0 0 8px}p{color:#4a4566;font-size:14px}code{font-size:12px;color:#7c7896}
+input{width:100%;box-sizing:border-box;font:inherit;padding:10px 12px;border:1px solid #d6d2e6;border-radius:10px;margin:6px 0 14px}
+button{font:600 14px inherit;border-radius:10px;padding:10px 16px;border:1px solid #5b3fe4;background:#5b3fe4;color:#fff;cursor:pointer;margin-right:8px}
+button.s{background:#fff;color:#1a1238;border-color:#e7e4f2}</style></head>
+<body><div class="c"><h1>Sem conexão com o servidor</h1>
+<p>O Domma View tenta de novo sozinho a cada 15 segundos. Confira a internet deste computador.</p><code id="err"></code>
+<p style="margin-top:18px"><b>Endereço do servidor</b></p><input id="srv"><button id="retry">Tentar agora</button><button class="s" id="save">Salvar endereço</button></div>
+<script>
+const q = new URLSearchParams(location.search);
+document.getElementById('srv').value = q.get('server') || '';
+document.getElementById('err').textContent = q.get('error') || '';
+document.getElementById('retry').onclick = () => window.dvNative.retry();
+document.getElementById('save').onclick = async () => { if (!(await window.dvNative.setServer(document.getElementById('srv').value))) alert('Endereço inválido. Use https://...'); };
+setInterval(() => window.dvNative.retry(), 15000);
+</script></body></html>
