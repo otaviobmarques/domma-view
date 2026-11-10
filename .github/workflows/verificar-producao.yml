@@ -1,0 +1,46 @@
+# Confere o servidor de produção visto de fora (site, API, HTTPS, WebSocket, download e TURN).
+name: Verificar produção
+on:
+  push:
+    branches: ['verificar/**']
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      URL: https://view.dommasistemas.com.br
+      HOST: view.dommasistemas.com.br
+    steps:
+      - name: DNS e certificado
+        run: |
+          getent hosts "$HOST"
+          echo | openssl s_client -servername "$HOST" -connect "$HOST:443" 2>/dev/null | openssl x509 -noout -issuer -subject -dates
+      - name: Páginas e API
+        run: |
+          for p in / /cadastro /download /app /agente.html /suporte /api/config /api/public/plans /api/public/downloads; do
+            printf '%-22s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code} %{time_total}s' "$URL$p")"
+          done
+          curl -s "$URL/api/public/downloads"; echo
+          curl -s "$URL/api/config" | python3 -c "import json,sys;d=json.load(sys.stdin);print('ICE:', [s['urls'] for s in d['iceServers']], 'credencial temporária:', any('username' in s for s in d['iceServers']))"
+      - name: Download do instalador com o código
+        run: curl -s -o /dev/null -D - "$URL/download/windows?empresa=ML-4821-ECV" | grep -iE "^HTTP|content-disposition|content-length"
+      - name: WebSocket
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --http1.1 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" --max-time 5 "$URL/ws" || true)
+          echo "upgrade /ws -> $code (101 esperado)"
+      - name: TURN (STUN binding UDP e TCP)
+        run: |
+          python3 - <<'PY'
+          import socket, os, struct
+          ip = socket.gethostbyname('view.dommasistemas.com.br')
+          msg = struct.pack('>HHI', 1, 0, 0x2112A442) + os.urandom(12)
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
+          s.sendto(msg, (ip, 3478))
+          try:
+              d, _ = s.recvfrom(2048); print('UDP 3478 responde: tipo 0x%04x' % struct.unpack('>H', d[:2]))
+          except Exception as e: print('UDP 3478 sem resposta:', e)
+          try:
+              t = socket.create_connection((ip, 3478), timeout=5); t.send(msg); d = t.recv(2048)
+              print('TCP 3478 responde: tipo 0x%04x' % struct.unpack('>H', d[:2]))
+          except Exception as e: print('TCP 3478 falhou:', e)
+          PY
