@@ -48,6 +48,19 @@ junto com os códigos de empresa do instalador (ex.: `ML-4821-ECV`).
 
 Em produção é obrigatório HTTPS: navegadores só liberam compartilhamento de tela em origem segura.
 
+## Produção (VPS Hostinger, Campinas)
+
+O servidor roda em `https://view.dommasistemas.com.br`, num VPS da Hostinger em Campinas (SP), como o projeto Docker
+`domma-view`. Ele fica atrás do Traefik do VPS, que emite o HTTPS com Let's Encrypt, e ao lado de um coturn (relay TURN
+nas portas 3478 e 49160–49260/UDP) com credenciais temporárias.
+
+- Compose: `deploy/docker-compose.yml`. Variáveis do projeto: `DOMINIO`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `TURN_SECRET`,
+  `PUBLIC_IP`, `IMAGE_TAG`, `WINDOWS_INSTALLER_URL`.
+- Imagem: `ghcr.io/otaviobmarques/domma-view`, publicada pelo workflow `imagem.yml` a cada push (tag = nome do branch;
+  `latest` no `main`). Para atualizar o servidor, recrie o projeto no Docker Manager do VPS (puxa a imagem de novo).
+- Instalador: workflow `agente-windows.yml`, disparo manual com `server_url` e `release` (ex.: `agente-v1.0.1`).
+- DNS (HostGator): registro A `view` → IP do VPS.
+
 ## Telas e fluxos
 
 | Descritivo | Onde | Situação |
