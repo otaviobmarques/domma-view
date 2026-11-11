@@ -22,6 +22,13 @@ function cursor() {
 }
 
 (async () => {
+  // sobe o servidor local dentro do teste (o runner encerra processos soltos ao fim de cada etapa)
+  if (!process.env.BASE_URL) {
+    const { spawn } = require('child_process');
+    const srv = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'index.js')], { env: { ...process.env, DATA_DIR: path.join(process.env.RUNNER_TEMP || require('os').tmpdir(), 'dv-data') }, stdio: 'inherit' });
+    process.on('exit', () => srv.kill());
+    for (let i = 0; i < 40; i++) { try { await fetch(BASE + '/api/config'); break; } catch { await sleep(500); } }
+  }
   console.log(execFileSync(EXE, ['install', '--server', BASE, '--empresa', 'DommaView-Setup_ML-4821-ECV.exe']).toString().trim());
   await api('/api/login', { body: { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD } });
   let dev;
@@ -83,4 +90,5 @@ function cursor() {
   await sleep(500); ws.close();
   console.log(execFileSync(EXE, ['uninstall']).toString().trim());
   console.log('\nSERVIÇO DO WINDOWS OK');
+  process.exit(0);
 })().catch((e) => { console.error('FALHOU:', e.message); process.exit(1); });

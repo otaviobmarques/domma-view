@@ -84,11 +84,6 @@ jobs:
         working-directory: agent-service
         run: go build -o dist/DommaViewService.exe .
       - run: npm ci
-      - name: Subir o servidor local
-        shell: pwsh
-        run: |
-          Start-Process -FilePath node -ArgumentList 'server/index.js' -RedirectStandardOutput server.log -RedirectStandardError server.err
-          for ($i = 0; $i -lt 30; $i++) { try { Invoke-WebRequest http://127.0.0.1:3000/api/config -UseBasicParsing | Out-Null; break } catch { Start-Sleep 1 } }
       - name: Diagnóstico do auxiliar (captura e cursor nesta sessão)
         run: agent-service\dist\DommaViewService.exe selftest
         continue-on-error: true
@@ -100,7 +95,6 @@ jobs:
         run: |
           Get-Content C:\ProgramData\DommaView\service.log -ErrorAction SilentlyContinue
           Get-Content C:\ProgramData\DommaView\helper.log -ErrorAction SilentlyContinue
-          Get-Content server.err -ErrorAction SilentlyContinue | Select-Object -Last 20
       - uses: actions/upload-artifact@v4
         if: always()
         with:
