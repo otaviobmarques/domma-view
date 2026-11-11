@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('dvNative', {
   sessionBar: (info) => ipcRenderer.send('dv:session-bar', info || null),
   attention: (soft) => ipcRenderer.send('dv:attention', !!soft),
   setupCode: () => ipcRenderer.invoke('dv:setup-code'),
+  serviceCreds: () => ipcRenderer.invoke('dv:service-creds'),
+  captureRect: () => ipcRenderer.invoke('dv:capture-rect'),
   getServer: () => ipcRenderer.invoke('dv:get-server'),
   setServer: (url) => ipcRenderer.invoke('dv:set-server', url),
   retry: () => ipcRenderer.send('dv:retry'),

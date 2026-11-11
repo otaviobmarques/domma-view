@@ -2,7 +2,7 @@
 const DVSession = (() => {
   const { esc, $, $$, api, toast, modal, logo, fmtId, fmtBytes, fmtDur } = DV;
   const NATIVE = 'Este computador usa o agente web, que só transmite a tela. Instale o Domma View para Windows nele para liberar este recurso.';
-  const NEEDS_SERVICE = 'Exige o serviço do Windows com privilégio de sistema (próxima fase do agente).';
+  const NEEDS_SERVICE = 'Exige o serviço do Windows do Domma View (instalado junto com o instalador para Windows).';
   let s = null;
 
   function open(info, wsClient, iceServers, opts = {}) {
@@ -14,7 +14,14 @@ const DVSession = (() => {
     el.className = 'session'; el.id = 'session';
     document.body.appendChild(el);
     s.el = el;
+    s.desktop = info.desktop || null;
+    s.fpsCount = 0; s.fps = 0;
     render();
+    if (s.relay) { // ninguém logado: só o serviço do Windows, imagem e controle pelo servidor
+      s.timer = setInterval(tick, 1000);
+      window.addEventListener('keydown', escListener);
+      return;
+    }
     s.pc = new RTCPeerConnection({ iceServers });
     s.pc.ontrack = (e) => { s.stream = e.streams[0]; const v = $('#rv'); if (v) { v.srcObject = s.stream; } renderScreenState(); };
     s.pc.onicecandidate = (e) => e.candidate && s.ws.send({ type: 'signal', sid: s.sid, data: { candidate: e.candidate } });
@@ -54,7 +61,42 @@ const DVSession = (() => {
     if (m.t === 'chat') { s.chat.push({ me: false, text: String(m.text).slice(0, 2000), ts: Date.now() }); if (s.tab === 'chat') renderPanel(); else flashTab('chat'); }
     if (m.t === 'files-list') { s.remoteFiles = (m.files || []).map((f) => ({ ...f, sel: false })); renderFiles(); toast('O usuário compartilhou arquivos.'); }
     if (m.t === 'hello' && m.sysinfo) { s.sysinfo = m.sysinfo; if (s.tab === 'sistema') renderPanel(); }
+    if (m.t === 'rect' && m.rect) s.rect = m.rect; // tela capturada pelo agente, em pixels reais (para o controle pelo serviço)
   }
+
+  // ---------- serviço do Windows: tela segura (UAC, bloqueio, login), Ctrl+Alt+Del, bloqueio de teclado ----------
+  const svcView = () => !!(s && (s.relay || (s.service && s.desktop && s.desktop.secure)));
+  async function onService(m) {
+    if (!s || m.sid !== s.sid) return;
+    if (m.type === 'svc-frame') {
+      const c = $('#sf'); if (!c) return;
+      try {
+        const bin = atob(m.data); const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        const bmp = await createImageBitmap(new Blob([buf], { type: 'image/jpeg' }));
+        if (c.width !== bmp.width || c.height !== bmp.height) { c.width = bmp.width; c.height = bmp.height; }
+        c.getContext('2d').drawImage(bmp, 0, 0);
+        if (s.lastFrame) s.lastFrame.close();
+        s.lastFrame = bmp;
+        s.fpsCount++;
+        if (!s.gotFrame) { s.gotFrame = true; renderScreenState(); }
+      } catch {}
+    } else if (m.type === 'svc-desktop') {
+      const was = svcView();
+      if (m.gone) s.service = false;
+      s.desktop = { name: m.name, secure: !!m.secure };
+      if (svcView() !== was) {
+        toast(svcView() ? 'Tela segura do Windows (UAC, bloqueio ou login): imagem e controle pelo serviço.' : 'De volta à área de trabalho.');
+        render();
+      }
+    } else if (m.type === 'priv-result') {
+      if (!m.ok) toast(m.error || 'O serviço não conseguiu executar.', true);
+      else if (m.op === 'sas') toast('Ctrl+Alt+Del enviado.');
+      else if (m.op === 'block') toast(s.blocked ? 'Teclado e mouse do cliente bloqueados. Ctrl+Alt+Del no computador desbloqueia.' : 'Teclado e mouse do cliente liberados.');
+      else if (m.op === 'reboot') toast('Reiniciando o computador remoto…');
+    }
+  }
+  function priv(op, extra = {}) { s.ws.send({ type: 'priv', sid: s.sid, op, ...extra }); }
 
   function flashTab(t) { const b = $(`.tabs [data-tab=${t}]`); if (b) b.textContent = b.textContent.replace(/ •$/, '') + ' •'; }
 
@@ -65,48 +107,69 @@ const DVSession = (() => {
     s.el.innerHTML = `
       <div class="s-top">
         <div class="who">${logo(22)}<div><b>${esc(s.device.name)}</b><span>${fmtId(s.device.id)} · <span id="clock">00:00:00</span></span></div></div>
-        ${tb('t-mon', 'Trocar tela', { title: 'Pede ao usuário para escolher outra tela ou monitor' })}
-        ${tb('t-q', `Qualidade · ${{ auto: 'auto', max: 'máxima', fast: 'rápida' }[s.quality]}`)}
-        ${tb('t-cad', 'Ctrl+Shift+Esc', { dis: !ctl('sas'), title: ctl('sas') ? 'Abre o Gerenciador de Tarefas no computador remoto. O Ctrl+Alt+Del real exige o serviço do sistema.' : NATIVE })}
-        ${tb('t-lock', 'Bloquear teclado do cliente', { dis: true, title: s.native ? NEEDS_SERVICE : NATIVE })}
-        ${tb('t-black', s.black ? 'Tela preta ligada' : 'Tela preta', { on: !!s.black, dis: !ctl('blackscreen'), title: ctl('blackscreen') ? 'Esconde a tela para quem está na frente do computador' : NATIVE })}
+        ${tb('t-mon', 'Trocar tela', { dis: !!s.relay, title: s.relay ? 'Na tela de login o serviço mostra todos os monitores' : 'Pede ao usuário para escolher outra tela ou monitor' })}
+        ${tb('t-q', `Qualidade · ${{ auto: 'auto', max: 'máxima', fast: 'rápida' }[s.quality]}`, { dis: !!s.relay })}
+        ${svc() ? tb('t-cad', 'Ctrl+Alt+Del', { dis: !has('controlar'), title: has('controlar') ? 'Ctrl+Alt+Del de verdade, enviado pelo serviço do Windows' : 'O usuário não liberou o controle' })
+          : tb('t-cad', 'Ctrl+Shift+Esc', { dis: !ctl('sas'), title: ctl('sas') ? 'Abre o Gerenciador de Tarefas. Para o Ctrl+Alt+Del de verdade, o computador precisa do serviço do Windows.' : NATIVE })}
+        ${tb('t-lock', s.blocked ? 'Teclado do cliente bloqueado' : 'Bloquear teclado do cliente', { on: !!s.blocked, dis: !(svc() && has('controlar')), title: svc() ? 'Bloqueia teclado e mouse de quem está na frente do computador. O Ctrl+Alt+Del físico sempre desbloqueia.' : s.native ? NEEDS_SERVICE : NATIVE })}
+        ${tb('t-black', s.black ? 'Tela preta ligada' : 'Tela preta', { on: !!s.black, dis: !!s.relay || !ctl('blackscreen'), title: ctl('blackscreen') ? 'Esconde a tela para quem está na frente do computador' : NATIVE })}
         ${tb('t-rec', s.recording ? 'Gravando' : 'Gravar', { on: !!s.recording, dis: !has('gravar'), title: has('gravar') ? '' : 'O usuário não liberou a gravação' })}
         ${tb('t-ann', 'Anotar na tela', { dis: true, title: 'Em desenvolvimento' })}
-        ${tb('t-rb', 'Reiniciar', { dis: !(s.native && s.caps.includes('reboot') && has('reiniciar')), title: !s.native ? NATIVE : has('reiniciar') ? 'Reinicia o computador remoto. Com acesso não assistido, ele volta sozinho.' : 'O usuário não liberou reiniciar' })}
+        ${tb('t-rb', 'Reiniciar', { dis: !((svc() || (s.native && (s.caps || []).includes('reboot'))) && has('reiniciar')), title: !(svc() || s.native) ? NATIVE : has('reiniciar') ? (svc() ? 'Reinicia o computador. O serviço volta sozinho e você pode entrar pela tela de login (acesso não assistido).' : 'Reinicia o computador remoto.') : 'O usuário não liberou reiniciar' })}
         ${tb('t-panel', 'Painel', { on: s.panel })}
-        ${tb('t-files', 'Arquivos', { on: s.filesOpen, dis: !has('arquivos'), title: has('arquivos') ? '' : 'O usuário não liberou arquivos' })}
+        ${tb('t-files', 'Arquivos', { on: s.filesOpen, dis: !!s.relay || !has('arquivos'), title: s.relay ? 'Arquivos precisam de alguém logado no computador' : has('arquivos') ? '' : 'O usuário não liberou arquivos' })}
         ${tb('t-full', 'Tela cheia')}
         <span class="stats" id="stats">conectando…</span>
         <button class="tb end" id="t-end">Encerrar</button>
       </div>
       <div class="rec-band ${s.recording ? 'on' : ''}">● Gravando a sessão · o cliente foi avisado e a gravação vai para a Auditoria</div>
+      ${svcView() ? `<div class="svc-band">🛡 ${s.relay ? 'Ninguém logado: tela de login do Windows' : 'Tela segura do Windows (UAC, bloqueio ou Ctrl+Alt+Del)'} · imagem e controle pelo serviço do Windows</div>` : ''}
       <div class="s-body ${s.panel ? '' : 'nopanel'}">
         <div class="screen" id="screen">
           <video id="rv" autoplay playsinline muted></video>
-          <div class="wait" id="wait">${s.unattended ? 'Acesso não assistido · ' : ''}Aguardando o vídeo do computador remoto…</div>
-          ${ctl('input') ? '<div class="ctrl-hint" id="hint">Controle ativo: clique na tela para usar mouse e teclado do computador remoto.</div>'
+          <canvas id="sf" class="svc-frame"></canvas>
+          <div class="wait" id="wait">${s.relay ? 'Conectando ao serviço do Windows…' : `${s.unattended ? 'Acesso não assistido · ' : ''}Aguardando o vídeo do computador remoto…`}</div>
+          ${canInput() ? '<div class="ctrl-hint" id="hint">Controle ativo: clique na tela para usar mouse e teclado do computador remoto.</div>'
             : has('controlar') ? '<div class="ctrl-hint" id="hint">Só visualização: este computador usa o agente web. Instale o Domma View para Windows nele para controlar mouse e teclado.</div>' : ''}
         </div>
         <aside class="s-panel" id="panel"></aside>
       </div>
       ${s.filesOpen ? '<div id="files-ov" style="position:absolute;inset:0;background:var(--bg);color:var(--ink);overflow:auto;z-index:5"></div>' : ''}`;
     if (s.stream) $('#rv').srcObject = s.stream;
+    if (s.lastFrame) { const c = $('#sf'); c.width = s.lastFrame.width; c.height = s.lastFrame.height; c.getContext('2d').drawImage(s.lastFrame, 0, 0); }
     renderScreenState(); renderPanel(); renderFiles(); bindTop(); bindInput();
     setTimeout(() => { const h = $('#hint'); h && h.remove(); }, 8000);
   }
 
-  function renderScreenState() { const w = $('#wait'); if (w) w.style.display = s.stream ? 'none' : ''; const v = $('#rv'); if (v) v.style.display = s.stream ? '' : 'none'; }
+  function renderScreenState() {
+    const sv = svcView(), ready = sv ? s.gotFrame : !!s.stream;
+    const w = $('#wait'); if (w) w.style.display = ready ? 'none' : '';
+    const v = $('#rv'); if (v) v.style.display = !sv && s.stream ? '' : 'none';
+    const c = $('#sf'); if (c) c.style.display = sv && s.gotFrame ? '' : 'none';
+  }
 
   // Controle remoto: só com agente desktop e com a permissão "Controlar mouse e teclado" liberada
   function ctl(cap) { return !!(s.native && (s.caps || []).includes(cap) && has('controlar')); }
-  function sendIn(m) { s.ch && s.ch.open && s.ch.send({ t: 'in', ...m }); }
+  function svc() { return !!s.service; }
+  function canInput() { return has('controlar') && (svcView() || (svc() && s.rect) || ctl('input')); }
+  // Na tela segura/login, o mouse e o teclado vão pelo serviço (SYSTEM). Na área de trabalho, também
+  // vão pelo serviço quando ele existe (alcança janelas de administrador); senão, pelo canal direto do agente.
+  function sendIn(m) {
+    if (svcView()) return priv('input', { m });
+    if (svc() && s.rect && m.x != null) {
+      return priv('input', { m: { ...m, ax: s.rect.x + m.x * (s.rect.width - 1), ay: s.rect.y + m.y * (s.rect.height - 1) } });
+    }
+    if (svc() && s.rect) return priv('input', { m });
+    s.ch && s.ch.open && s.ch.send({ t: 'in', ...m });
+  }
   function bindInput() {
-    if (!ctl('input')) return;
-    const v = $('#rv'); if (!v) return;
-    v.tabIndex = 0;
+    if (!canInput()) return;
+    const v = $('#screen'); if (!v) return;
+    v.tabIndex = 0; v.style.outline = 'none';
     const held = new Set();
     const pos = (e) => {
-      const r = v.getBoundingClientRect(), vw = v.videoWidth, vh = v.videoHeight;
+      const t = svcView() ? $('#sf') : $('#rv'); if (!t) return null;
+      const r = t.getBoundingClientRect(), vw = svcView() ? t.width : t.videoWidth, vh = svcView() ? t.height : t.videoHeight;
       if (!vw || !vh) return null;
       const k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
       const x = (e.clientX - (r.left + (r.width - w) / 2)) / w, y = (e.clientY - (r.top + (r.height - h) / 2)) / h;
@@ -150,15 +213,20 @@ const DVSession = (() => {
     on('t-panel', () => { s.panel = !s.panel; render(); });
     on('t-full', () => { document.fullscreenElement ? document.exitFullscreen() : $('#screen').requestFullscreen?.(); });
     on('t-mon', () => { s.ch && s.ch.send({ t: 'monitor' }); toast(s.native ? 'Trocando para a próxima tela…' : 'Pedimos ao usuário para escolher a outra tela.'); });
-    on('t-cad', () => { sendIn({ k: 'combo', codes: ['ControlLeft', 'ShiftLeft', 'Escape'] }); s.ws.send({ type: 'session-event', sid: s.sid, event: 'atalho_enviado', details: { atalho: 'Ctrl+Shift+Esc' } }); $('#rv')?.focus(); });
+    on('t-cad', () => {
+      if (svc()) { priv('sas'); return; }
+      sendIn({ k: 'combo', codes: ['ControlLeft', 'ShiftLeft', 'Escape'] });
+      s.ws.send({ type: 'session-event', sid: s.sid, event: 'atalho_enviado', details: { atalho: 'Ctrl+Shift+Esc' } }); $('#screen')?.focus();
+    });
+    on('t-lock', () => { s.blocked = !s.blocked; priv('block', { on: s.blocked }); render(); });
     on('t-black', () => {
       s.black = !s.black; s.ch && s.ch.send({ t: 'black', on: s.black });
       s.ws.send({ type: 'session-event', sid: s.sid, event: 'tela_preta', details: { ligada: s.black } }); render();
     });
     on('t-rb', () => {
       if (!confirm(`Reiniciar ${s.device.name} agora? A sessão cai e, com acesso não assistido, o computador volta para a lista em cerca de 1 minuto.`)) return;
-      s.ch && s.ch.send({ t: 'reboot' });
-      s.ws.send({ type: 'session-event', sid: s.sid, event: 'reinicio_solicitado' });
+      if (svc()) priv('reboot');
+      else { s.ch && s.ch.send({ t: 'reboot' }); s.ws.send({ type: 'session-event', sid: s.sid, event: 'reinicio_solicitado' }); }
     });
     on('t-q', () => {
       s.quality = { auto: 'max', max: 'fast', fast: 'auto' }[s.quality];
@@ -175,7 +243,9 @@ const DVSession = (() => {
     const p = $('#panel'); if (!p) return;
     const tabs = `<div class="tabs">${['chat', 'sistema', 'ia'].map((t) => `<button data-tab="${t}" class="${s.tab === t ? 'on' : ''}">${{ chat: 'Chat', sistema: 'Sistema', ia: 'Domma IA' }[t]}</button>`).join('')}</div>`;
     let body = '', foot = '<div></div>';
-    if (s.tab === 'chat') {
+    if (s.tab === 'chat' && s.relay) {
+      body = '<div class="small" style="color:#a79fd0">Ninguém está logado neste computador, então não há chat nem arquivos. Faça login pela tela ao lado; quando o usuário entrar, abra uma nova sessão para ter tudo.</div>';
+    } else if (s.tab === 'chat') {
       body = s.chat.length ? s.chat.map((m) => `<div class="msg ${m.me ? 'me' : ''}">${esc(m.text)}</div>`).join('') : '<div class="muted small" style="color:#a79fd0">Converse com quem está no computador. Tudo fica no registro do atendimento.</div>';
       foot = `<div><div class="chat-in"><input id="ci" placeholder="Escreva para o cliente" maxlength="2000"><button class="btn primary sm" id="cs">Enviar</button></div>
         ${has('clipboard') ? '<div style="padding:0 10px 10px"><button class="tb" id="clip" style="width:100%">Enviar minha área de transferência</button></div>' : ''}</div>`;
@@ -295,10 +365,11 @@ const DVSession = (() => {
 
   // ---------- gravação (MediaRecorder no lado do técnico, enviada cifrada ao servidor) ----------
   function startRecording() {
-    if (!s.stream) return toast('Aguarde o vídeo começar.', true);
+    const src = s.relay ? ($('#sf') && $('#sf').captureStream(5)) : s.stream;
+    if (!src || (s.relay && !s.gotFrame)) return toast('Aguarde o vídeo começar.', true);
     const type = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t));
     if (!type) return toast('Este navegador não grava vídeo.', true);
-    const rec = new MediaRecorder(s.stream, { mimeType: type, videoBitsPerSecond: 1_500_000 });
+    const rec = new MediaRecorder(src, { mimeType: type, videoBitsPerSecond: 1_500_000 });
     const parts = [];
     rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
     rec.onstop = async () => {
@@ -322,6 +393,11 @@ const DVSession = (() => {
   async function tick() {
     if (!s) return;
     const c = $('#clock'); if (c) c.textContent = fmtDur(Date.now() - s.started);
+    s.fps = s.fpsCount; s.fpsCount = 0;
+    if (svcView()) {
+      const el = $('#stats'); if (el) el.textContent = `${s.fps} fps · serviço do Windows · via servidor`;
+      if (s.relay) return;
+    }
     try {
       const st = await s.pc.getStats();
       let rtt, fps, pair, locType;
@@ -336,7 +412,7 @@ const DVSession = (() => {
         if (s.stats.route !== locType) { s.stats.route = locType; s.ws.send({ type: 'session-event', sid: s.sid, event: 'rota', details: { route: locType } }); }
       }
       const el = $('#stats');
-      if (el) el.textContent = pair ? `${rtt != null ? Math.round(rtt * 1000) + ' ms' : '—'}  ${fps ? Math.round(fps) + ' fps' : ''}  ${locType}` : 'conectando…';
+      if (el && !svcView()) el.textContent = pair ? `${rtt != null ? Math.round(rtt * 1000) + ' ms' : '—'}  ${fps ? Math.round(fps) + ' fps' : ''}  ${locType}` : 'conectando…';
     } catch {}
   }
 
@@ -345,7 +421,7 @@ const DVSession = (() => {
     if (s.recording) stopRecording();
     if (notify) s.ws.send({ type: 'end', sid: s.sid });
     clearInterval(s.timer);
-    try { s.pc.close(); } catch {}
+    try { s.pc && s.pc.close(); } catch {}
     s.el.remove();
     window.removeEventListener('keydown', escListener);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -354,5 +430,5 @@ const DVSession = (() => {
     DVSession.onEnd && DVSession.onEnd(sid);
   }
 
-  return { open, onSignal, end, get active() { return s; }, onEnd: null };
+  return { open, onSignal, onService, end, get active() { return s; }, onEnd: null };
 })();

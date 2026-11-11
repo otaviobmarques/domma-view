@@ -117,6 +117,7 @@
         connectTo.openFiles = false;
         break;
       case 'signal': DVSession.onSignal(m); break;
+      case 'svc-frame': case 'svc-desktop': case 'priv-result': DVSession.onService(m); break;
       case 'end': if (DVSession.active && DVSession.active.sid === m.sid) DVSession.end(false, m.by); break;
       case 'queue-changed': refreshMe(); if (location.hash.startsWith('#/fila')) PAGES.fila(); break;
     }

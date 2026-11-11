@@ -185,3 +185,6 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
   .grid2, .kpis, .files-grid, .plans { grid-template-columns: 1fr; }
   .s-body { grid-template-columns: 1fr; grid-template-rows: 1fr 260px; }
 }
+
+.screen canvas.svc-frame { width: 100%; height: 100%; object-fit: contain; border-radius: 10px; }
+.svc-band { background: #1d2b4f; color: #b9d3ff; font-size: 12px; padding: 5px 14px; }

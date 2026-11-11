@@ -6,7 +6,7 @@ name: Agente Windows
 
 on:
   push:
-    paths: ['agent-desktop/**', '.github/workflows/agente-windows.yml']
+    paths: ['agent-desktop/**', 'agent-service/**', 'test/service-e2e.js', '.github/workflows/agente-windows.yml']
     tags: ['agente-v*']
   workflow_dispatch:
     inputs:
@@ -35,6 +35,13 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: agent-desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: agent-service/go.sum
+      - name: Compilar o serviço do Windows
+        working-directory: agent-service
+        run: go build -trimpath -ldflags "-s -w" -o dist/DommaViewService.exe .
       - run: npm ci
       - name: Autoteste de mouse (SendInput)
         run: node scripts/selftest-input.js
@@ -56,3 +63,47 @@ jobs:
           TAG: ${{ github.event.inputs.release || github.ref_name }}
         run: |
           gh release create "$TAG" dist/DommaView-Setup.exe --target "$GITHUB_SHA" --title "Domma View para Windows ${TAG#agente-v}" --notes "Instalador do agente Domma View para Windows. Servidor - $DV_SERVER_URL" || gh release upload "$TAG" dist/DommaView-Setup.exe --clobber
+
+  servico:
+    # Instala o serviço num Windows de verdade e testa contra um servidor local
+    runs-on: windows-latest
+    env:
+      ADMIN_EMAIL: admin@domma.local
+      ADMIN_PASSWORD: teste-servico-123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: agent-service/go.sum
+      - name: Compilar o serviço
+        working-directory: agent-service
+        run: go build -o dist/DommaViewService.exe .
+      - run: npm ci
+      - name: Subir o servidor local
+        shell: pwsh
+        run: |
+          Start-Process -FilePath node -ArgumentList 'server/index.js' -RedirectStandardOutput server.log -RedirectStandardError server.err
+          for ($i = 0; $i -lt 30; $i++) { try { Invoke-WebRequest http://127.0.0.1:3000/api/config -UseBasicParsing | Out-Null; break } catch { Start-Sleep 1 } }
+      - name: Diagnóstico do auxiliar (captura e cursor nesta sessão)
+        run: agent-service\dist\DommaViewService.exe selftest
+        continue-on-error: true
+      - name: Teste do serviço
+        run: node test/service-e2e.js
+      - name: Registros
+        if: always()
+        shell: pwsh
+        run: |
+          Get-Content C:\ProgramData\DommaView\service.log -ErrorAction SilentlyContinue
+          Get-Content C:\ProgramData\DommaView\helper.log -ErrorAction SilentlyContinue
+          Get-Content server.err -ErrorAction SilentlyContinue | Select-Object -Last 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: servico-quadro
+          path: ${{ runner.temp }}/quadro-servico.jpg
+          if-no-files-found: ignore
