@@ -9,7 +9,8 @@
   "scripts": {
     "start": "electron .",
     "config": "node scripts/write-config.js",
-    "dist:win": "node scripts/write-config.js && electron-builder --win nsis --x64 --publish never"
+    "dist:win": "node scripts/write-config.js && electron-builder --win nsis --x64 --publish never",
+    "service": "cd ../agent-service && go build -trimpath -ldflags \"-s -w\" -o dist/DommaViewService.exe ."
   },
   "dependencies": {
     "koffi": "2.16.3"
@@ -55,8 +56,8 @@
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
-      "allowElevation": false,
+      "perMachine": true,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
@@ -66,7 +67,17 @@
       "include": "build/installer.nsh",
       "language": "1046"
     },
-    "publish": null
+    "publish": null,
+    "extraResources": [
+      {
+        "from": "../agent-service/dist/DommaViewService.exe",
+        "to": "DommaViewService.exe"
+      },
+      {
+        "from": "config.json",
+        "to": "config.json"
+      }
+    ]
   },
   "repository": "github:otaviobmarques/domma-view"
 }

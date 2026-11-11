@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 `);
 
 // Migração de bancos criados antes das contas (multiempresa)
-for (const [t, c] of [['companies', 'account_id INTEGER'], ['users', 'account_id INTEGER'], ['sessions', 'account_id INTEGER'], ['audit', 'account_id INTEGER']]) {
+for (const [t, c] of [['devices', 'service_key_hash TEXT'], ['companies', 'account_id INTEGER'], ['users', 'account_id INTEGER'], ['sessions', 'account_id INTEGER'], ['audit', 'account_id INTEGER']]) {
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${c}`); } catch {}
 }
 db.exec('CREATE INDEX IF NOT EXISTS audit_account ON audit(account_id, id)');

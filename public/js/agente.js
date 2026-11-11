@@ -343,7 +343,9 @@
         toast(`Arquivo recebido: ${f.name}`); renderAgent();
       },
     });
-    dc.onopen = () => { if (sess.shared.length) sess.ch.send({ t: 'files-list', files: sess.shared.map((f) => ({ id: f.id, name: f.file.name, size: f.file.size })) }); sess.ch.send({ t: 'hello', sysinfo: sess.sysinfo }); };
+    dc.onopen = async () => {
+      if (NATIVE) { try { sess.ch.send({ t: 'rect', rect: await NATIVE.captureRect() }); } catch {} }
+      if (sess.shared.length) sess.ch.send({ t: 'files-list', files: sess.shared.map((f) => ({ id: f.id, name: f.file.name, size: f.file.size })) }); sess.ch.send({ t: 'hello', sysinfo: sess.sysinfo }); };
     pc.onicecandidate = (e) => e.candidate && ws.send({ type: 'signal', sid: sess.sid, data: { candidate: e.candidate } });
     pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') toast('Falha na conexão com o técnico.', true); };
     const offer = await pc.createOffer();
@@ -377,6 +379,7 @@
       await sender.replaceTrack(track);
       stream = s; watchTrack(track); old && old.getTracks().forEach((t) => t.stop());
       ws.send({ type: 'session-event', sid: sess.sid, event: 'monitor_trocado' });
+      sess.ch && sess.ch.send({ t: 'rect', rect: await NATIVE.captureRect() });
     } catch {}
   }
 
@@ -443,8 +446,21 @@
   if (isQuick) startQuick();
   else {
     creds = loadCreds();
-    if (creds) startAgent();
-    else (async () => {
+    (async () => {
+      // Com o serviço do Windows instalado, o computador já foi registrado por ele: usa o mesmo ID
+      if (NATIVE && NATIVE.serviceCreds) {
+        let sc = null;
+        for (let i = 0; i < 10; i++) { // na primeira inicialização o serviço pode estar terminando o registro
+          try { sc = await NATIVE.serviceCreds(); } catch {}
+          if (!sc || sc.ready) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+        if (sc && sc.ready && (!creds || creds.deviceId !== sc.deviceId)) {
+          creds = { deviceId: sc.deviceId, agentKey: sc.agentKey, company: sc.company, name: sc.name, accessMode: 'permissao', service: true };
+          saveCreds(creds);
+        }
+      }
+      if (creds) return startAgent();
       if (NATIVE && !wz.code) { try { wz.code = (await NATIVE.setupCode()) || ''; } catch {} }
       await lookup(); renderWizard();
     })();

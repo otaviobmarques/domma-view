@@ -114,6 +114,8 @@ function setupIpc() {
   });
   ipcMain.handle('dv:setup-code', (e) => (fromServer(e) ? readSetupCode() : null));
   ipcMain.on('dv:version', (e) => { e.returnValue = app.getVersion(); });
+  ipcMain.handle('dv:capture-rect', (e) => (fromServer(e) ? capturedRect() : null));
+  ipcMain.handle('dv:service-creds', (e) => (fromServer(e) ? readServiceCreds() : null));
   ipcMain.handle('dv:get-server', () => serverUrl());
   ipcMain.handle('dv:set-server', (e, url) => {
     if (!String(e.senderFrame.url).startsWith('file:')) return false; // só a tela local de configuração troca o servidor
@@ -121,6 +123,19 @@ function setupIpc() {
   });
   ipcMain.on('dv:retry', () => loadAgent());
   ipcMain.on('dv:bar-end', () => { win && win.webContents.send('dv:end-request'); });
+}
+
+// Chaves do computador entregues pelo serviço do Windows (pipe só de leitura; nenhum comando vai por aqui).
+// Assim o app e o serviço usam o mesmo ID, e o computador continua aparecendo mesmo sem ninguém logado.
+function readServiceCreds() {
+  if (!IS_WIN) return null;
+  try {
+    const raw = fs.readFileSync('\\\\.\\pipe\\DommaViewCreds', 'utf8');
+    const c = JSON.parse(raw);
+    if (!c.ready || !c.deviceId || !c.agentKey) return { ready: false };
+    if (c.serverUrl && new URL(c.serverUrl).origin !== origin()) return { ready: false, reason: 'outro servidor' };
+    return c;
+  } catch { return null; } // serviço não instalado
 }
 
 // O instalador grava o código da empresa (vindo do nome do arquivo ou de /EMPRESA=) ao lado do .exe

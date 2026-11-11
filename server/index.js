@@ -79,9 +79,13 @@ function windowsInstaller() {
     const file = path.join(DOWNLOADS_DIR, path.basename(meta.windows.file));
     if (fs.existsSync(file)) return { file, version: meta.windows.version };
   } catch {}
-  const cached = path.join(DOWNLOADS_DIR, 'DommaView-Setup.cache.exe');
-  if (fs.existsSync(cached)) return { file: cached, version: process.env.WINDOWS_INSTALLER_VERSION || null };
-  return process.env.WINDOWS_INSTALLER_URL ? { url: process.env.WINDOWS_INSTALLER_URL, cached, version: process.env.WINDOWS_INSTALLER_VERSION || null } : null;
+  if (!process.env.WINDOWS_INSTALLER_URL) return null;
+  // a cópia local acompanha o endereço: trocar para uma versão nova baixa o arquivo novo
+  const tag = sha256(process.env.WINDOWS_INSTALLER_URL).slice(0, 12);
+  const cached = path.join(DOWNLOADS_DIR, `DommaView-Setup.${tag}.exe`);
+  const version = process.env.WINDOWS_INSTALLER_VERSION || (process.env.WINDOWS_INSTALLER_URL.match(/agente-v([\d.]+)/) || [])[1] || null;
+  if (fs.existsSync(cached)) return { file: cached, version };
+  return { url: process.env.WINDOWS_INSTALLER_URL, cached, version };
 }
 async function cacheInstaller(w) {
   installerFetch = installerFetch || (async () => {
@@ -166,6 +170,23 @@ app.post('/api/agent/register', (req, res) => {
     VALUES(?,?,?,?,?,?,?,0,?,?)`).run(id, name, c.id, String(b.os || '').slice(0, 60), mode, unattendedPass, sha256(agentKey), now(), now());
   audit({ companyId: c.id, deviceId: id, actor: name, event: 'dispositivo_registrado', details: { modo: mode, os: b.os }, ip: ip(req) });
   res.json({ deviceId: id, agentKey, company: { name: c.name, code: c.code, verified: !!c.verified }, accessMode: mode, name });
+});
+
+// Registro feito pelo serviço do Windows na instalação (por máquina, com o código da empresa).
+// Cria o computador e devolve as chaves do agente (que o app do usuário lê do serviço) e do serviço.
+app.post('/api/agent/service-register', (req, res) => {
+  if (!throttle(req, res)) return;
+  const b = req.body || {};
+  const c = db.prepare('SELECT * FROM companies WHERE code=?').get(String(b.companyCode || '').trim().toUpperCase());
+  if (!c) return bad(res, 404, 'Código de empresa não encontrado.');
+  const name = String(b.name || 'Computador').trim().slice(0, 60) || 'Computador';
+  const id = newDeviceId();
+  const agentKey = crypto.randomBytes(32).toString('base64url');
+  const serviceKey = crypto.randomBytes(32).toString('base64url');
+  db.prepare(`INSERT INTO devices(id,name,company_id,os,access_mode,agent_key_hash,service_key_hash,quick,created_at,last_seen)
+    VALUES(?,?,?,?,'permissao',?,?,0,?,?)`).run(id, name, c.id, String(b.os || 'Windows').slice(0, 60), sha256(agentKey), sha256(serviceKey), now(), now());
+  audit({ companyId: c.id, deviceId: id, actor: name, event: 'dispositivo_registrado', details: { via: 'servico_windows', os: b.os }, ip: ip(req) });
+  res.json({ deviceId: id, agentKey, serviceKey, name, company: { name: c.name, code: c.code, verified: !!c.verified } });
 });
 
 app.get('/api/support-link/:token', (req, res) => {
@@ -416,7 +437,7 @@ const EVENT_LABEL = {
   dispositivo_registrado: 'Computador instalado', dispositivo_alterado: 'Computador alterado', dispositivo_removido: 'Computador removido', chamado_aberto: 'Chamado aberto',
   chamado_encerrado: 'Chamado encerrado', link_suporte_criado: 'Link de suporte criado', pessoa_convidada: 'Pessoa convidada', perfil_alterado: 'Perfil alterado',
   quicksupport_aberto: 'QuickSupport aberto', empresa_criada: 'Empresa criada', senha_alterada: 'Senha alterada', qualidade_alterada: 'Qualidade alterada',
-  conta_criada: 'Conta criada', monitor_trocado: 'Tela trocada', tela_preta: 'Tela preta', reinicio_solicitado: 'Reinício do computador', atalho_enviado: 'Atalho de sistema enviado', relatorio_gerado: 'Relatório do atendimento', plano_alterado: 'Plano alterado',
+  conta_criada: 'Conta criada', monitor_trocado: 'Tela trocada', tela_preta: 'Tela preta', ctrl_alt_del: 'Ctrl+Alt+Del solicitado', bloqueio_teclado: 'Bloqueio do teclado do cliente', reinicio_solicitado: 'Reinício do computador', atalho_enviado: 'Atalho de sistema enviado', relatorio_gerado: 'Relatório do atendimento', plano_alterado: 'Plano alterado',
 };
 app.get('/api/sessions', requirePerm('historico'), (req, res) => {
   const s = historyScope(req.user, 's');

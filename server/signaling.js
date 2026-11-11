@@ -7,6 +7,9 @@ const { userFromRequest, inCompany } = require('./auth');
 const { PLANS } = require('./plans');
 
 const agents = new Map();   // deviceId -> { ws, password, device, unattendedReady, sysinfo }
+const services = new Map(); // deviceId -> { ws, device, desktop: { name, secure }, sysinfo } (serviço do Windows, SYSTEM)
+const SERVICE_CAPS = ['input', 'sas', 'block', 'reboot'];
+const FRAME_FPS = 5;
 const techs = new Map();    // userId -> Set<ws>
 const pending = new Map();  // reqId -> { ... }
 const live = new Map();     // sessionId -> { agentWs, techWs, deviceId, user, perms, ticketId, recording }
@@ -43,8 +46,9 @@ function planLimit(accountId) {
 // ---------- API usada pelas rotas HTTP ----------
 function status(deviceId) {
   if ([...live.values()].some((s) => s.deviceId === deviceId)) return 'em_sessao';
-  return agents.has(deviceId) ? 'online' : 'offline';
+  return agents.has(deviceId) || services.has(deviceId) ? 'online' : 'offline';
 }
+const liveFor = (deviceId) => [...live.entries()].find(([, s]) => s.deviceId === deviceId) || [];
 function presence(userId) {
   if ([...live.values()].some((s) => s.user.id === userId)) return 'em_sessao';
   return techs.has(userId) ? 'livre' : 'ausente';
@@ -54,7 +58,7 @@ function liveSessions() { return [...live.entries()].map(([id, s]) => ({ id, dev
 
 // ---------- conexão ----------
 function attach(server) {
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 * 1024 });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4 * 1024 * 1024 });
 
   wss.on('connection', (ws, req) => {
     ws.ip = ipOf(req);
@@ -102,6 +106,59 @@ function handle(ws, m) {
         type: 'welcome', deviceId: d.id, password: a.password, name: d.name, accessMode: d.access_mode,
         company: d.company_id ? { name: d.company_name, verified: !!d.company_verified } : null, quick: !!d.quick,
       });
+    }
+    // ===== serviço do Windows (SYSTEM): tela de login, UAC, Ctrl+Alt+Del, bloqueio de teclado =====
+    case 'hello-service': {
+      const d = loadDevice(String(m.deviceId || ''));
+      if (!d || !d.service_key_hash || !m.serviceKey || sha256(String(m.serviceKey)) !== d.service_key_hash) {
+        return send(ws, { type: 'error', code: 'unknown_device', message: 'Serviço não reconhecido.' });
+      }
+      const prev = services.get(d.id);
+      if (prev && prev.ws !== ws) prev.ws.close();
+      ws.serviceDeviceId = d.id;
+      services.set(d.id, { ws, device: d, desktop: { name: String(m.desktop || 'Default'), secure: !!m.secure }, sysinfo: m.sysinfo || null });
+      db.prepare('UPDATE devices SET last_seen=?, os=COALESCE(?,os) WHERE id=?').run(Date.now(), m.sysinfo?.os || null, d.id);
+      send(ws, { type: 'welcome-service', deviceId: d.id, accessMode: d.access_mode });
+      const [sid, s] = liveFor(d.id);
+      if (sid) { send(ws, { type: 'session-start', sid, relay: !!s.relay }); updateFrames(sid); }
+      if (!agents.has(d.id)) notifyQueueIfTicket(d);
+      return;
+    }
+    case 'desktop': {
+      const sv = ws.serviceDeviceId && services.get(ws.serviceDeviceId);
+      if (!sv || sv.ws !== ws) return;
+      sv.desktop = { name: String(m.name || ''), secure: !!m.secure };
+      const [sid, s] = liveFor(ws.serviceDeviceId);
+      if (sid) { send(s.techWs, { type: 'svc-desktop', sid, ...sv.desktop }); updateFrames(sid); }
+      return;
+    }
+    case 'frame': {
+      const sv = ws.serviceDeviceId && services.get(ws.serviceDeviceId);
+      const s = live.get(m.sid);
+      if (!sv || sv.ws !== ws || !s || s.deviceId !== ws.serviceDeviceId) return;
+      // descarta quadros se o técnico estiver com a conexão lenta (não acumula atraso)
+      if (s.techWs.bufferedAmount > 2 * 1024 * 1024) return;
+      return send(s.techWs, { type: 'svc-frame', sid: m.sid, data: m.data, w: m.w, h: m.h });
+    }
+    case 'priv-result': {
+      const s = live.get(m.sid);
+      if (!s || ws.serviceDeviceId !== s.deviceId) return;
+      return send(s.techWs, { type: 'priv-result', sid: m.sid, op: m.op, ok: !!m.ok, error: m.error ? String(m.error).slice(0, 200) : null });
+    }
+    case 'priv': {
+      // técnico → serviço: só durante a própria sessão e conforme as permissões que o usuário liberou
+      const s = live.get(m.sid);
+      if (!s || ws !== s.techWs) return;
+      const sv = services.get(s.deviceId);
+      if (!sv) return send(ws, { type: 'priv-result', sid: m.sid, op: m.op, ok: false, error: 'O serviço do Windows não está ativo neste computador.' });
+      const need = { input: 'controlar', sas: 'controlar', block: 'controlar', reboot: 'reiniciar' }[m.op];
+      if (!need) return;
+      if (!s.perms.includes(need)) return send(ws, { type: 'priv-result', sid: m.sid, op: m.op, ok: false, error: 'O usuário não liberou esta permissão.' });
+      if (m.op !== 'input') {
+        audit({ companyId: s.device.company_id, userId: s.user.id, actor: s.user.name, deviceId: s.deviceId, sessionId: m.sid,
+          event: { sas: 'ctrl_alt_del', block: 'bloqueio_teclado', reboot: 'reinicio_solicitado' }[m.op], details: m.op === 'block' ? { ligado: !!m.on } : null, ip: ws.ip });
+      }
+      return send(sv.ws, { type: 'priv', sid: m.sid, op: m.op, on: !!m.on, m: m.op === 'input' ? m.m : undefined });
     }
     case 'rotate': if (ws.deviceId) rotatePassword(ws.deviceId); return;
     case 'agent-state': {
@@ -179,9 +236,10 @@ function requestAccess(ws, m) {
   if (user.role === 'funcionario') return send(ws, { type: 'error', message: 'O perfil Funcionário não acessa outras máquinas.' });
   const deviceId = String(m.deviceId || '').replace(/\D/g, '');
   const a = agents.get(deviceId);
-  const d = a ? a.device : loadDevice(deviceId);
+  const sv = services.get(deviceId);
+  const d = loadDevice(deviceId); // sempre o estado atual (ex.: acesso não assistido ligado no console há pouco)
   if (!d) return send(ws, { type: 'error', message: 'ID não encontrado.' });
-  if (!a) return send(ws, { type: 'error', message: `${d.name} está offline agora.` });
+  if (!a && !sv) return send(ws, { type: 'error', message: `${d.name} está offline agora.` });
   if ([...live.values()].some((s) => s.deviceId === deviceId)) return send(ws, { type: 'error', message: 'Este computador já está em uma sessão.' });
   const limit = planLimit(user.account_id);
   if (activeSessionCount(user.account_id) >= limit) return send(ws, { type: 'error', message: `Limite do plano atingido: ${limit} sessões simultâneas. Encerre uma sessão ou mude de plano.` });
@@ -194,7 +252,7 @@ function requestAccess(ws, m) {
   // Fora da própria empresa só entra com a senha (temporária ou fixa do não assistido).
   if (!inScope) {
     const pw = String(m.password || '').trim();
-    const ok = pw && (pw === a.password || (d.unattended_pass && verifyPassword(pw, d.unattended_pass)));
+    const ok = pw && ((a && pw === a.password) || (d.unattended_pass && verifyPassword(pw, d.unattended_pass)));
     if (!ok) {
       const cur = f && !f.until ? f : { count: 0, until: 0 }; // bloqueio vencido recomeça a contagem
       cur.count += 1;
@@ -219,6 +277,16 @@ function requestAccess(ws, m) {
   const p = { reqId, deviceId, device: d, user, techWs: ws, perms, code, ticketId: m.ticketId || null, timer: null };
   pending.set(reqId, p);
 
+  // Sem ninguém logado (só o serviço do Windows): entra apenas no modo não assistido, pela tela de login
+  if (!a) {
+    if (d.access_mode !== 'nao_assistido') {
+      finishPending(reqId);
+      return send(ws, { type: 'error', message: `Ninguém está usando ${d.name} agora (tela de login). Ative o acesso não assistido nele para entrar assim.` });
+    }
+    audit({ companyId: d.company_id, userId: user.id, actor: user.name, deviceId, event: 'pedido_acesso', details: { permissoes: perms, nao_assistido: true, servico: true }, ip: ws.ip });
+    send(ws, { type: 'pending', reqId, code, device: { id: d.id, name: d.name }, unattended: true });
+    return startSession(reqId, perms.filter((x) => !['arquivos', 'clipboard'].includes(x)), true, true);
+  }
   const unattended = inScope && d.access_mode === 'nao_assistido' && a.unattendedReady;
   audit({ companyId: d.company_id, userId: user.id, actor: user.name, deviceId, event: 'pedido_acesso',
     details: { permissoes: perms, nao_assistido: unattended }, ip: ws.ip });
@@ -253,13 +321,14 @@ function finishPending(reqId) {
   return p;
 }
 
-function startSession(reqId, perms, unattended) {
+function startSession(reqId, perms, unattended, relay = false) {
   const p = finishPending(reqId);
   if (!p) return;
-  const a = agents.get(p.deviceId);
-  if (!a) return send(p.techWs, { type: 'error', message: 'O computador ficou offline.' });
+  const sv = services.get(p.deviceId);
+  const a = relay ? null : agents.get(p.deviceId);
+  if (relay ? !sv : !a) return send(p.techWs, { type: 'error', message: 'O computador ficou offline.' });
   const sid = crypto.randomUUID();
-  const s = { agentWs: a.ws, techWs: p.techWs, deviceId: p.deviceId, device: p.device, user: p.user, perms, ticketId: p.ticketId, recording: false, started: Date.now() };
+  const s = { agentWs: relay ? sv.ws : a.ws, techWs: p.techWs, deviceId: p.deviceId, device: p.device, user: p.user, perms, ticketId: p.ticketId, recording: false, started: Date.now(), relay };
   live.set(sid, s);
   db.prepare('INSERT INTO sessions(id,account_id,device_id,tech_id,company_id,ticket_id,started_at,permissions,unattended) VALUES(?,?,?,?,?,?,?,?,?)')
     .run(sid, p.user.account_id, p.deviceId, p.user.id, p.device.company_id, p.ticketId, s.started, JSON.stringify(perms), unattended ? 1 : 0);
@@ -269,9 +338,25 @@ function startSession(reqId, perms, unattended) {
   }
   audit({ companyId: p.device.company_id, userId: p.user.id, actor: unattended ? p.user.name : p.device.name, deviceId: p.deviceId, sessionId: sid,
     event: unattended ? 'acesso_nao_assistido' : 'acesso_permitido', details: { codigo: p.code, permissoes: perms } });
-  const info = { sid, perms, unattended, native: a.native, caps: a.caps, device: { id: p.device.id, name: p.device.name, company: p.device.company_name, os: p.device.os } };
-  send(a.ws, { type: 'session', ...info, tech: { name: p.user.name, company: p.user.company_name } });
-  send(p.techWs, { type: 'session', ...info, sysinfo: a.sysinfo });
+  const info = {
+    sid, perms, unattended, relay, native: relay ? true : a.native, caps: relay ? [] : a.caps, service: !!sv, serviceCaps: sv ? SERVICE_CAPS : [],
+    desktop: sv ? sv.desktop : null, device: { id: p.device.id, name: p.device.name, company: p.device.company_name, os: p.device.os },
+  };
+  if (a) send(a.ws, { type: 'session', ...info, tech: { name: p.user.name, company: p.user.company_name } });
+  if (sv) send(sv.ws, { type: 'session-start', sid, relay, tech: p.user.name });
+  send(p.techWs, { type: 'session', ...info, sysinfo: a ? a.sysinfo : sv.sysinfo });
+  if (sv) updateFrames(sid);
+}
+
+// Quadros do serviço: sempre na sessão pela tela de login; nas sessões normais só quando aparece a tela segura (UAC/bloqueio)
+function updateFrames(sid) {
+  const s = live.get(sid);
+  const sv = s && services.get(s.deviceId);
+  if (!sv) return;
+  const on = !!(s.relay || (sv.desktop && sv.desktop.secure));
+  if (s.framesOn === on) return;
+  s.framesOn = on;
+  send(sv.ws, { type: 'frames', sid, on, fps: FRAME_FPS });
 }
 
 function endSession(sid, by, fromWs) {
@@ -289,6 +374,8 @@ function endSession(sid, by, fromWs) {
     event: 'sessao_encerrada', details: { por: by, duracao_s: Math.round((now - s.started) / 1000) } });
   send(s.agentWs, { type: 'end', sid, by });
   send(s.techWs, { type: 'end', sid, by });
+  const sv = services.get(s.deviceId);
+  if (sv) send(sv.ws, { type: 'session-end', sid });
   rotatePassword(s.deviceId); // senha temporária muda a cada sessão
 }
 
@@ -296,6 +383,14 @@ function cleanup(ws) {
   if (ws.user) {
     const set = techs.get(ws.user.id);
     if (set) { set.delete(ws); if (!set.size) techs.delete(ws.user.id); }
+  }
+  if (ws.serviceDeviceId && services.get(ws.serviceDeviceId)?.ws === ws) {
+    const gone = services.get(ws.serviceDeviceId).device;
+    services.delete(ws.serviceDeviceId);
+    db.prepare('UPDATE devices SET last_seen=? WHERE id=?').run(Date.now(), ws.serviceDeviceId);
+    const [sid, s] = liveFor(ws.serviceDeviceId);
+    if (sid && !s.relay) send(s.techWs, { type: 'svc-desktop', sid, name: 'Default', secure: false, gone: true });
+    if (!agents.has(gone.id)) notifyQueueIfTicket(gone);
   }
   if (ws.deviceId && agents.get(ws.deviceId)?.ws === ws) {
     const gone = agents.get(ws.deviceId).device;
@@ -327,6 +422,8 @@ function broadcastTechs(companyId, msg) {
 function kickDevice(deviceId) {
   const a = agents.get(deviceId);
   if (a) { send(a.ws, { type: 'error', code: 'unknown_device', message: 'Este computador foi removido da conta.' }); a.ws.close(); }
+  const sv = services.get(deviceId);
+  if (sv) { send(sv.ws, { type: 'error', code: 'unknown_device', message: 'Este computador foi removido da conta.' }); sv.ws.close(); }
 }
 
 module.exports = { attach, status, presence, stats, liveSessions, broadcastTechs, kickDevice, live };

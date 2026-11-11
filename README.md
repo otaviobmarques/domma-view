@@ -120,13 +120,41 @@ O workflow `.github/workflows/agente-windows.yml` gera o instalador num Windows 
 `agent-desktop/` (artefato do workflow) e o publica numa Release quando se cria uma tag `agente-v1.0.0`.
 Defina a variável de repositório `DV_SERVER_URL` com o endereço do servidor.
 
+### Serviço do Windows (`agent-service/`, Go)
+
+O instalador (por máquina, pede administrador uma vez) instala também o serviço `DommaViewService`, que roda
+como Sistema desde a inicialização do Windows:
+
+- **Tela de login sem ninguém logado** (inclusive depois de reiniciar): o computador aparece online e o técnico entra
+  se o acesso não assistido estiver ligado. A imagem e o controle vão pelo servidor (JPEG ~5 fps).
+- **Tela segura com alguém logado** (UAC, bloqueio, Ctrl+Alt+Del): o console troca sozinho para a imagem do serviço e
+  volta ao vídeo normal quando ela some.
+- **Ctrl+Alt+Del de verdade** (SendSAS), **bloquear teclado e mouse do cliente** (BlockInput; o Ctrl+Alt+Del físico
+  sempre desbloqueia) e **reiniciar**.
+- Com o serviço, o mouse e o teclado do técnico também alcançam **janelas de administrador**.
+
+Segurança: o serviço só recebe comandos pela própria conexão autenticada com o servidor (chave do serviço, guardada em
+`C:\ProgramData\DommaView`, acessível só a Sistema e Administradores). Localmente, ele só entrega ao app do usuário o
+ID e a chave do agente, por um pipe somente leitura, para os dois usarem o mesmo computador no console. Cada comando
+segue as permissões que a pessoa liberou na sessão e vai para a auditoria.
+
+```bash
+DommaViewService.exe install --server https://view.dommasistemas.com.br --empresa ML-4821-ECV
+```
+
+```bash
+DommaViewService.exe status
+```
+
+O workflow `agente-windows.yml` instala o serviço num Windows de verdade e testa: registro, pipe de chaves, sessão pela
+tela de login, quadros, mouse, bloqueio de teclado, Ctrl+Alt+Del (troca para o desktop Winlogon) e a instalação
+silenciosa do `.exe` com o serviço.
+
 Limites atuais:
 
 - sem certificado de assinatura de código o Windows mostra “editor desconhecido” (SmartScreen) e alguns antivírus
   podem desconfiar; o certificado EV entra antes do lançamento;
-- roda como programa do usuário, não como serviço: não controla janelas de administrador nem a tela de login/UAC,
-  e não envia o Ctrl+Alt+Del real nem bloqueia o teclado local. Isso exige o serviço com privilégio de sistema
-  (próxima fase, núcleo em Rust do descritivo);
+- na tela de login a imagem vai pelo servidor (não P2P) e é mais lenta que o vídeo normal;
 - macOS e Linux ainda não têm agente instalável.
 
 ## Limites do agente web
@@ -179,4 +207,5 @@ public/js/sessao.js   sessão remota e arquivos do técnico
 public/js/agente.js   instalador, QuickSupport e tela do usuário
 public/index.html     site · cadastro.html portal de cadastro · download.html downloads
 agent-desktop/        agente para Windows (main.js, input-win.js, preload.js, instalador NSIS)
+agent-service/        serviço do Windows em Go (service.go, helper.go, desktop.go)
 ```
