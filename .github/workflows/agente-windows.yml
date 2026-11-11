@@ -50,6 +50,23 @@ jobs:
       - name: Nome estável para download
         shell: bash
         run: cp dist/DommaView-Setup-*.exe dist/DommaView-Setup.exe
+      - name: Instalar em modo silencioso e conferir o serviço
+        shell: pwsh
+        run: |
+          Start-Process -FilePath dist\DommaView-Setup.exe -ArgumentList '/S','/EMPRESA=ML-4821-ECV' -Wait
+          $dir = "$env:ProgramFiles\Domma View"
+          if (-not (Test-Path "$dir\Domma View.exe")) { throw "app não instalado em $dir" }
+          if (-not (Test-Path "$dir\resources\DommaViewService.exe")) { throw "serviço não copiado" }
+          Write-Host "código gravado: $(Get-Content "$dir\setup-code.txt")"
+          Start-Sleep 5
+          $svc = Get-Service DommaViewService -ErrorAction Stop
+          Write-Host "serviço: $($svc.Status) / $($svc.StartType)"
+          if ($svc.Status -ne 'Running' -or $svc.StartType -ne 'Automatic') { throw "serviço não está rodando com início automático" }
+          & "$dir\resources\DommaViewService.exe" status
+          Start-Process -FilePath "$dir\Uninstall Domma View.exe" -ArgumentList '/S' -Wait
+          Start-Sleep 8
+          if (Get-Service DommaViewService -ErrorAction SilentlyContinue) { throw "serviço ficou depois de desinstalar" }
+          Write-Host "desinstalado e serviço removido"
       - uses: actions/upload-artifact@v4
         with:
           name: DommaView-Setup
