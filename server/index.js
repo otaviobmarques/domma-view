@@ -79,9 +79,13 @@ function windowsInstaller() {
     const file = path.join(DOWNLOADS_DIR, path.basename(meta.windows.file));
     if (fs.existsSync(file)) return { file, version: meta.windows.version };
   } catch {}
-  const cached = path.join(DOWNLOADS_DIR, 'DommaView-Setup.cache.exe');
-  if (fs.existsSync(cached)) return { file: cached, version: process.env.WINDOWS_INSTALLER_VERSION || null };
-  return process.env.WINDOWS_INSTALLER_URL ? { url: process.env.WINDOWS_INSTALLER_URL, cached, version: process.env.WINDOWS_INSTALLER_VERSION || null } : null;
+  if (!process.env.WINDOWS_INSTALLER_URL) return null;
+  // a cópia local acompanha o endereço: trocar para uma versão nova baixa o arquivo novo
+  const tag = sha256(process.env.WINDOWS_INSTALLER_URL).slice(0, 12);
+  const cached = path.join(DOWNLOADS_DIR, `DommaView-Setup.${tag}.exe`);
+  const version = process.env.WINDOWS_INSTALLER_VERSION || (process.env.WINDOWS_INSTALLER_URL.match(/agente-v([\d.]+)/) || [])[1] || null;
+  if (fs.existsSync(cached)) return { file: cached, version };
+  return { url: process.env.WINDOWS_INSTALLER_URL, cached, version };
 }
 async function cacheInstaller(w) {
   installerFetch = installerFetch || (async () => {
